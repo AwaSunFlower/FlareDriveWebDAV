@@ -1,39 +1,92 @@
-// Main.tsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Box,
   Breadcrumbs,
   Button,
+  Chip,
   CircularProgress,
-  Link,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  Fab,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
+  Paper,
+  Stack,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
   Typography,
+  useTheme,
 } from "@mui/material";
-import { Home as HomeIcon, NoteAdd as NoteAddIcon } from "@mui/icons-material";
+import ArrowDownwardRoundedIcon from "@mui/icons-material/ArrowDownwardRounded";
+import ArrowUpwardRoundedIcon from "@mui/icons-material/ArrowUpwardRounded";
+import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
+import CloudUploadRoundedIcon from "@mui/icons-material/CloudUploadRounded";
+import CreateNewFolderRoundedIcon from "@mui/icons-material/CreateNewFolderRounded";
+import FolderOpenRoundedIcon from "@mui/icons-material/FolderOpenRounded";
+import GridViewRoundedIcon from "@mui/icons-material/GridViewRounded";
+import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
+import NavigateNextRoundedIcon from "@mui/icons-material/NavigateNextRounded";
+import NoteAddRoundedIcon from "@mui/icons-material/NoteAddRounded";
+import SortRoundedIcon from "@mui/icons-material/SortRounded";
+import ViewListRoundedIcon from "@mui/icons-material/ViewListRounded";
 
-import FileGrid, { encodeKey, FileItem, isDirectory } from "./FileGrid";
+import FileGrid, {
+  encodeKey,
+  extractFilename,
+  FileItem,
+  isDirectory,
+  ViewMode,
+} from "./FileGrid";
+import ImagePreviewDialog from "./ImagePreviewDialog";
+import { isEditableTextFile, isImageFile } from "./MimeIcon";
 import MultiSelectToolbar from "./MultiSelectToolbar";
-import UploadDrawer, { UploadFab } from "./UploadDrawer";
 import TextPadDrawer from "./TextPadDrawer";
-import { copyPaste, fetchPath } from "./app/transfer";
+import UploadDrawer, { UploadFab } from "./UploadDrawer";
+import { copyPaste, createFolder, fetchPath } from "./app/transfer";
 import { useTransferQueue, useUploadEnqueue } from "./app/transferQueue";
+import { humanReadableSize } from "./app/utils";
 
-// Centered helper
-function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <Box
-      sx={{
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        height: "100%",
-      }}
-    >
-      {children}
-    </Box>
-  );
+type SortField = "name" | "date" | "size";
+type SortOrder = "asc" | "desc";
+type NotifySeverity = "success" | "info" | "warning" | "error";
+
+const VIEW_MODE_KEY = "sunflower_drive_view_mode";
+const SORT_FIELD_KEY = "sunflower_drive_sort_field";
+const SORT_ORDER_KEY = "sunflower_drive_sort_order";
+
+const SORT_LABELS: Record<SortField, string> = {
+  name: "名称",
+  date: "修改时间",
+  size: "文件大小",
+};
+
+function readStorage<T extends string>(
+  key: string,
+  allowed: readonly T[],
+  fallback: T
+): T {
+  try {
+    const val = window.localStorage.getItem(key) as T | null;
+    if (val && allowed.includes(val)) return val;
+  } catch {
+    // ignore storage errors
+  }
+  return fallback;
 }
 
-// Breadcrumb component
 function PathBreadcrumb({
   path,
   onCwdChange,
@@ -41,107 +94,206 @@ function PathBreadcrumb({
   path: string;
   onCwdChange: (newCwd: string) => void;
 }) {
-  const parts = path.replace(/\/$/, "").split("/");
+  const theme = useTheme();
+  const isLight = theme.palette.mode === "light";
+  const parts = path ? path.replace(/\/$/, "").split("/").filter(Boolean) : [];
 
   return (
-    <Breadcrumbs separator="›" sx={{ padding: 1 }}>
-      <Button onClick={() => onCwdChange("")} sx={{ minWidth: 0, padding: 0 }}>
-        <HomeIcon />
+    <Breadcrumbs
+      separator={
+        <NavigateNextRoundedIcon
+          sx={{ fontSize: 18, color: "text.secondary" }}
+        />
+      }
+      aria-label="当前目录路径"
+      sx={{
+        "& .MuiBreadcrumbs-ol": { alignItems: "center", flexWrap: "wrap" },
+      }}
+    >
+      <Button
+        size="small"
+        startIcon={<HomeRoundedIcon sx={{ fontSize: 18 }} />}
+        onClick={() => onCwdChange("")}
+        sx={{
+          minWidth: 0,
+          px: 1.25,
+          py: 0.4,
+          borderRadius: "10px",
+          color: parts.length === 0 ? "primary.main" : "text.secondary",
+          backgroundColor:
+            parts.length === 0
+              ? isLight
+                ? "rgba(251, 191, 36, 0.18)"
+                : "rgba(251, 191, 36, 0.14)"
+              : "transparent",
+          fontWeight: parts.length === 0 ? 700 : 600,
+          "&:hover": {
+            backgroundColor: isLight
+              ? "rgba(251, 191, 36, 0.14)"
+              : "rgba(251, 191, 36, 0.1)",
+          },
+        }}
+      >
+        全部文件
       </Button>
-      {parts.map((part, index) =>
-        index === parts.length - 1 ? (
-          <Typography key={index} color="text.primary">
-            {part}
-          </Typography>
+
+      {parts.map((part, index) => {
+        const isLast = index === parts.length - 1;
+        return isLast ? (
+          <Chip
+            key={`${part}-${index}`}
+            label={part}
+            size="small"
+            sx={{
+              height: 28,
+              fontWeight: 700,
+              fontSize: "0.84rem",
+              borderRadius: "10px",
+              color: isLight ? "#92400E" : "#FDE68A",
+              backgroundColor: isLight
+                ? "rgba(251, 191, 36, 0.2)"
+                : "rgba(251, 191, 36, 0.16)",
+            }}
+          />
         ) : (
-          <Link
-            key={index}
-            component="button"
-            onClick={() => {
-              onCwdChange(parts.slice(0, index + 1).join("/") + "/");
+          <Button
+            key={`${part}-${index}`}
+            size="small"
+            onClick={() =>
+              onCwdChange(parts.slice(0, index + 1).join("/") + "/")
+            }
+            sx={{
+              minWidth: 0,
+              px: 1,
+              py: 0.35,
+              borderRadius: "10px",
+              color: "text.secondary",
+              fontWeight: 600,
+              "&:hover": { color: "primary.main" },
             }}
           >
             {part}
-          </Link>
-        )
-      )}
+          </Button>
+        );
+      })}
     </Breadcrumbs>
   );
 }
 
-// DropZone wrapper
-function DropZone({
-  children,
-  onDrop,
-}: {
-  children: React.ReactNode;
-  onDrop: (files: FileList) => void;
-}) {
-  const [dragging, setDragging] = useState(false);
-
-  return (
-    <Box
-      sx={{
-        flexGrow: 1,
-        overflowY: "auto",
-        backgroundColor: (theme) => theme.palette.background.default,
-        filter: dragging ? "brightness(0.9)" : "none",
-        transition: "filter 0.2s",
-      }}
-      onDragEnter={(e) => {
-        e.preventDefault();
-        setDragging(true);
-      }}
-      onDragOver={(e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
-      }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        onDrop(e.dataTransfer.files);
-        setDragging(false);
-      }}
-    >
-      {children}
-    </Box>
-  );
+interface MainProps {
+  search: string;
+  onClearSearch: () => void;
+  refreshToken: number;
+  resetRootToken: number;
+  onRefreshingChange: (loading: boolean) => void;
+  onNotify: (message: string, severity?: NotifySeverity) => void;
 }
 
-// Main Component
 function Main({
   search,
-  onError,
-}: {
-  search: string;
-  onError: (error: Error) => void;
-}) {
+  onClearSearch,
+  refreshToken,
+  resetRootToken,
+  onRefreshingChange,
+  onNotify,
+}: MainProps) {
+  const theme = useTheme();
+  const isLight = theme.palette.mode === "light";
+
   const [cwd, setCwd] = useState("");
   const [files, setFiles] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [multiSelected, setMultiSelected] = useState<string[] | null>(null);
   const [showUploadDrawer, setShowUploadDrawer] = useState(false);
   const [showTextPadDrawer, setShowTextPadDrawer] = useState(false);
+  const [editingTextFile, setEditingTextFile] = useState<FileItem | null>(null);
   const [lastUploadKey, setLastUploadKey] = useState<string | null>(null);
+
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    readStorage(VIEW_MODE_KEY, ["grid", "list"] as const, "grid")
+  );
+  const [sortField, setSortField] = useState<SortField>(() =>
+    readStorage(SORT_FIELD_KEY, ["name", "date", "size"] as const, "name")
+  );
+  const [sortOrder, setSortOrder] = useState<SortOrder>(() =>
+    readStorage(SORT_ORDER_KEY, ["asc", "desc"] as const, "asc")
+  );
+  const [sortMenuAnchor, setSortMenuAnchor] = useState<null | HTMLElement>(
+    null
+  );
+
+  // Dialog states
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [dialogSubmitting, setDialogSubmitting] = useState(false);
+  const [previewImage, setPreviewImage] = useState<FileItem | null>(null);
+
+  // Drag & drop state using counter so child elements don't cause flicker
+  const [dragging, setDragging] = useState(false);
+  const dragCounter = useRef(0);
 
   const transferQueue = useTransferQueue();
   const uploadEnqueue = useUploadEnqueue();
 
+  const handleViewModeChange = (next: ViewMode) => {
+    setViewMode(next);
+    try {
+      window.localStorage.setItem(VIEW_MODE_KEY, next);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleSortFieldChange = (field: SortField) => {
+    setSortField(field);
+    try {
+      window.localStorage.setItem(SORT_FIELD_KEY, field);
+    } catch {
+      // ignore
+    }
+    setSortMenuAnchor(null);
+  };
+
+  const handleToggleSortOrder = () => {
+    const next: SortOrder = sortOrder === "asc" ? "desc" : "asc";
+    setSortOrder(next);
+    try {
+      window.localStorage.setItem(SORT_ORDER_KEY, next);
+    } catch {
+      // ignore
+    }
+  };
+
   const fetchFiles = useCallback(() => {
+    setLoading(true);
+    onRefreshingChange(true);
     fetchPath(cwd)
-      .then((files) => {
-        setFiles(files);
+      .then((fetchedFiles) => {
+        setFiles(fetchedFiles);
         setMultiSelected(null);
       })
-      .catch(onError)
-      .finally(() => setLoading(false));
-  }, [cwd, onError]);
-
-  useEffect(() => setLoading(true), [cwd]);
+      .catch((err: Error) => {
+        onNotify(err?.message || "加载文件列表失败", "error");
+      })
+      .finally(() => {
+        setLoading(false);
+        onRefreshingChange(false);
+      });
+  }, [cwd, onNotify, onRefreshingChange]);
 
   useEffect(() => {
     fetchFiles();
-  }, [fetchFiles]);
+  }, [fetchFiles, refreshToken]);
+
+  useEffect(() => {
+    if (resetRootToken > 0) {
+      setCwd("");
+      setMultiSelected(null);
+    }
+  }, [resetRootToken]);
 
   useEffect(() => {
     if (!transferQueue.length) return;
@@ -151,19 +303,84 @@ function Main({
     } else if (lastUploadKey) {
       fetchFiles();
       setLastUploadKey(null);
+      if (lastFile.status === "completed") {
+        onNotify(`已上传：${lastFile.name}`, "success");
+      }
     }
-  }, [cwd, fetchFiles, lastUploadKey, transferQueue]);
+  }, [fetchFiles, lastUploadKey, onNotify, transferQueue]);
 
-  const filteredFiles = useMemo(
-    () =>
-      (search
-        ? files.filter((file) =>
-            file.key.toLowerCase().includes(search.toLowerCase())
-          )
-        : files
-      ).sort((a, b) => (isDirectory(a) ? -1 : isDirectory(b) ? 1 : 0)),
-    [files, search]
+  const filteredFiles = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    const base = keyword
+      ? files.filter((file) =>
+          extractFilename(file.key).toLowerCase().includes(keyword)
+        )
+      : files;
+
+    const dirMultiplier = sortOrder === "asc" ? 1 : -1;
+
+    return [...base].sort((a, b) => {
+      const aDir = isDirectory(a);
+      const bDir = isDirectory(b);
+      if (aDir !== bDir) return aDir ? -1 : 1;
+
+      if (sortField === "date") {
+        const aTime = new Date(a.uploaded).getTime() || 0;
+        const bTime = new Date(b.uploaded).getTime() || 0;
+        return (aTime - bTime) * dirMultiplier;
+      }
+      if (sortField === "size") {
+        return (a.size - b.size) * dirMultiplier;
+      }
+      return (
+        extractFilename(a.key).localeCompare(
+          extractFilename(b.key),
+          "zh-CN",
+          { numeric: true, sensitivity: "base" }
+        ) * dirMultiplier
+      );
+    });
+  }, [files, search, sortField, sortOrder]);
+
+  const folderCount = useMemo(
+    () => files.filter((f) => isDirectory(f)).length,
+    [files]
   );
+  const fileCount = files.length - folderCount;
+  const totalSize = useMemo(
+    () => files.reduce((acc, f) => acc + (isDirectory(f) ? 0 : f.size), 0),
+    [files]
+  );
+
+  const imageFiles = useMemo(
+    () =>
+      filteredFiles.filter(
+        (f) =>
+          !isDirectory(f) &&
+          isImageFile(f.httpMetadata?.contentType, extractFilename(f.key))
+      ),
+    [filteredFiles]
+  );
+
+  const editableTextFiles = useMemo(
+    () =>
+      files.filter(
+        (f) =>
+          !isDirectory(f) &&
+          isEditableTextFile(f.httpMetadata?.contentType, extractFilename(f.key))
+      ),
+    [files]
+  );
+
+  const handleOpenTextPadForNew = useCallback(() => {
+    setEditingTextFile(null);
+    setShowTextPadDrawer(true);
+  }, []);
+
+  const handleEditTextFile = useCallback((file: FileItem) => {
+    setEditingTextFile(file);
+    setShowTextPadDrawer(true);
+  }, []);
 
   const handleMultiSelect = useCallback((key: string) => {
     setMultiSelected((prev) => {
@@ -176,103 +393,765 @@ function Main({
     });
   }, []);
 
-  return (
-    <>
-      {cwd && <PathBreadcrumb path={cwd} onCwdChange={setCwd} />}
+  const handleSelectAll = useCallback(() => {
+    if (!filteredFiles.length) return;
+    setMultiSelected((prev) =>
+      prev && prev.length === filteredFiles.length
+        ? null
+        : filteredFiles.map((f) => f.key)
+    );
+  }, [filteredFiles]);
 
-      {loading ? (
-        <Centered>
-          <CircularProgress />
-        </Centered>
-      ) : (
-        <DropZone
-          onDrop={(files) => {
-            uploadEnqueue(
-              ...Array.from(files).map((file) => ({ file, basedir: cwd }))
-            );
+  const handleCopyLink = useCallback(
+    async (file: FileItem) => {
+      const url = new URL(
+        `/webdav/${encodeKey(file.key)}`,
+        window.location.href
+      ).toString();
+      try {
+        await navigator.clipboard.writeText(url);
+        onNotify(`已复制直链：${extractFilename(file.key)}`, "success");
+      } catch {
+        onNotify("复制失败，请手动打开文件地址", "warning");
+      }
+    },
+    [onNotify]
+  );
+
+  const handleShareSelected = useCallback(async () => {
+    if (multiSelected?.length !== 1) return;
+    const key = multiSelected[0];
+    const url = new URL(
+      `/webdav/${encodeKey(key)}`,
+      window.location.href
+    ).toString();
+
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share({ title: extractFilename(key), url });
+        return;
+      } catch {
+        // fallback to clipboard
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(url);
+      onNotify("已复制文件直链到剪贴板", "success");
+    } catch {
+      onNotify("无法复制链接", "error");
+    }
+  }, [multiSelected, onNotify]);
+
+  const handleCreateFolderSubmit = async () => {
+    if (!newFolderName.trim()) return;
+    setDialogSubmitting(true);
+    try {
+      const created = await createFolder(cwd, newFolderName);
+      if (created) {
+        onNotify(`已创建文件夹「${newFolderName.trim()}」`, "success");
+        setFolderDialogOpen(false);
+        setNewFolderName("");
+        fetchFiles();
+      }
+    } catch (err) {
+      onNotify(
+        err instanceof Error ? err.message : "创建文件夹失败",
+        "error"
+      );
+    } finally {
+      setDialogSubmitting(false);
+    }
+  };
+
+  const openRenameDialog = () => {
+    if (multiSelected?.length !== 1) return;
+    setRenameValue(extractFilename(multiSelected[0]));
+    setRenameDialogOpen(true);
+  };
+
+  const handleRenameSubmit = async () => {
+    if (multiSelected?.length !== 1 || !renameValue.trim()) return;
+    const trimmed = renameValue.trim();
+    if (trimmed.includes("/")) {
+      onNotify("名称不能包含 /", "warning");
+      return;
+    }
+    setDialogSubmitting(true);
+    try {
+      await copyPaste(multiSelected[0], cwd + trimmed, true);
+      onNotify(`已重命名为「${trimmed}」`, "success");
+      setRenameDialogOpen(false);
+      fetchFiles();
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : "重命名失败", "error");
+    } finally {
+      setDialogSubmitting(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!multiSelected?.length) return;
+    setDialogSubmitting(true);
+    try {
+      for (const key of multiSelected) {
+        const res = await fetch(`/webdav/${encodeKey(key)}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          throw new Error(`删除 ${extractFilename(key)} 失败 (${res.status})`);
+        }
+      }
+      onNotify(`已删除 ${multiSelected.length} 个项目`, "success");
+      setDeleteDialogOpen(false);
+      fetchFiles();
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : "删除失败", "error");
+    } finally {
+      setDialogSubmitting(false);
+    }
+  };
+
+  return (
+    <Box
+      component="main"
+      sx={{
+        flexGrow: 1,
+        position: "relative",
+        display: "flex",
+        flexDirection: "column",
+      }}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        dragCounter.current += 1;
+        setDragging(true);
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        dragCounter.current -= 1;
+        if (dragCounter.current <= 0) {
+          dragCounter.current = 0;
+          setDragging(false);
+        }
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        dragCounter.current = 0;
+        setDragging(false);
+        if (e.dataTransfer.files?.length) {
+          uploadEnqueue(
+            ...Array.from(e.dataTransfer.files).map((file) => ({
+              file,
+              basedir: cwd,
+            }))
+          );
+          onNotify(
+            `已加入 ${e.dataTransfer.files.length} 个文件到上传队列`,
+            "info"
+          );
+        }
+      }}
+    >
+      {/* Drag Overlay */}
+      {dragging && (
+        <Box
+          sx={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1400,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            p: 3,
+            backgroundColor: isLight
+              ? "rgba(253, 251, 247, 0.86)"
+              : "rgba(20, 18, 16, 0.86)",
+            backdropFilter: "blur(8px)",
+            pointerEvents: "none",
           }}
         >
+          <Paper
+            elevation={0}
+            sx={{
+              p: 5,
+              borderRadius: "28px",
+              border: "2px dashed",
+              borderColor: "primary.main",
+              backgroundColor: isLight
+                ? "rgba(255, 251, 235, 0.95)"
+                : "rgba(38, 34, 29, 0.95)",
+              textAlign: "center",
+            }}
+          >
+            <CloudUploadRoundedIcon
+              sx={{ fontSize: 56, color: "primary.main", mb: 1.5 }}
+            />
+            <Typography variant="h6" gutterBottom>
+              松手即可上传文件
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              目标目录：{cwd ? `/${cwd}` : "根目录"}
+            </Typography>
+          </Paper>
+        </Box>
+      )}
+
+      {/* Main Content Container */}
+      <Box
+        sx={{
+          width: "100%",
+          maxWidth: 1240,
+          mx: "auto",
+          px: { xs: 2, sm: 3 },
+          pt: { xs: 2, sm: 3 },
+          pb: 6,
+          flexGrow: 1,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {/* Workspace Hero & Action Card */}
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 1.75, sm: 2.25 },
+            mb: 2.5,
+            borderRadius: "20px",
+            border: "1px solid",
+            borderColor: "divider",
+            backgroundColor: isLight
+              ? "rgba(255, 255, 255, 0.86)"
+              : "rgba(30, 27, 24, 0.86)",
+            backdropFilter: "blur(12px)",
+            boxShadow: isLight
+              ? "0 4px 20px rgba(120, 53, 15, 0.04)"
+              : "0 4px 22px rgba(0, 0, 0, 0.28)",
+          }}
+        >
+          <Stack
+            direction={{ xs: "column", md: "row" }}
+            alignItems={{ xs: "stretch", md: "center" }}
+            justifyContent="space-between"
+            spacing={2}
+          >
+            {/* Left: Breadcrumbs + Stats */}
+            <Stack spacing={0.85} sx={{ minWidth: 0 }}>
+              <PathBreadcrumb path={cwd} onCwdChange={setCwd} />
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={1}
+                flexWrap="wrap"
+                useFlexGap
+                sx={{ pl: 0.5 }}
+              >
+                <Typography variant="caption" color="text.secondary">
+                  {folderCount} 个文件夹 · {fileCount} 个文件
+                  {totalSize > 0
+                    ? ` · 共 ${humanReadableSize(totalSize)}`
+                    : ""}
+                </Typography>
+                {search.trim() && (
+                  <Chip
+                    size="small"
+                    label={`筛选“${search.trim()}” (${filteredFiles.length})`}
+                    onDelete={onClearSearch}
+                    color="primary"
+                    variant="outlined"
+                    sx={{ height: 22, fontSize: "0.72rem" }}
+                  />
+                )}
+              </Stack>
+            </Stack>
+
+            {/* Right: Desktop Primary Actions */}
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{
+                display: { xs: "none", sm: "flex" },
+                flexShrink: 0,
+              }}
+            >
+              <Button
+                variant="outlined"
+                color="inherit"
+                startIcon={<CreateNewFolderRoundedIcon />}
+                onClick={() => {
+                  setNewFolderName("");
+                  setFolderDialogOpen(true);
+                }}
+                sx={{
+                  borderColor: "divider",
+                  backgroundColor: isLight
+                    ? "rgba(255, 255, 255, 0.8)"
+                    : "rgba(38, 34, 29, 0.7)",
+                  "&:hover": {
+                    borderColor: "primary.main",
+                    color: "primary.main",
+                  },
+                }}
+              >
+                新建文件夹
+              </Button>
+              <Tooltip title="新建或在线编辑文本 / Markdown / JSON 文件">
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  startIcon={<NoteAddRoundedIcon />}
+                  onClick={handleOpenTextPadForNew}
+                  sx={{
+                    backgroundColor: isLight
+                      ? "rgba(251, 191, 36, 0.08)"
+                      : "rgba(251, 191, 36, 0.08)",
+                  }}
+                >
+                  TextPad
+                </Button>
+              </Tooltip>
+              <Button
+                variant="contained"
+                startIcon={<CloudUploadRoundedIcon />}
+                onClick={() => setShowUploadDrawer(true)}
+                sx={{ px: 2.25 }}
+              >
+                上传文件
+              </Button>
+            </Stack>
+          </Stack>
+
+          <Divider sx={{ my: 1.5 }} />
+
+          {/* Sub-bar: Hints + Sort + View Switcher */}
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="space-between"
+            spacing={1.5}
+            flexWrap="wrap"
+            useFlexGap
+          >
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ display: { xs: "none", sm: "block" } }}
+            >
+              支持直接拖拽上传 · 右键或点击卡片右上角可批量操作
+            </Typography>
+
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{ ml: "auto" }}
+            >
+              <Button
+                size="small"
+                color="inherit"
+                startIcon={<SortRoundedIcon sx={{ fontSize: 18 }} />}
+                onClick={(e) => setSortMenuAnchor(e.currentTarget)}
+                sx={{
+                  px: 1.25,
+                  py: 0.45,
+                  fontSize: "0.8rem",
+                  borderRadius: "10px",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  color: "text.secondary",
+                }}
+              >
+                {SORT_LABELS[sortField]}
+              </Button>
+
+              <Tooltip title={sortOrder === "asc" ? "当前升序" : "当前降序"}>
+                <Button
+                  size="small"
+                  color="inherit"
+                  aria-label="切换排序方向"
+                  onClick={handleToggleSortOrder}
+                  sx={{
+                    minWidth: 34,
+                    px: 0.8,
+                    py: 0.55,
+                    borderRadius: "10px",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    color: "text.secondary",
+                  }}
+                >
+                  {sortOrder === "asc" ? (
+                    <ArrowUpwardRoundedIcon sx={{ fontSize: 17 }} />
+                  ) : (
+                    <ArrowDownwardRoundedIcon sx={{ fontSize: 17 }} />
+                  )}
+                </Button>
+              </Tooltip>
+
+              <ToggleButtonGroup
+                size="small"
+                exclusive
+                value={viewMode}
+                onChange={(_, val: ViewMode | null) => {
+                  if (val) handleViewModeChange(val);
+                }}
+                aria-label="切换文件视图"
+                sx={{
+                  "& .MuiToggleButton-root": {
+                    px: 1,
+                    py: 0.45,
+                    borderColor: "divider",
+                    borderRadius: "10px !important",
+                    "&.Mui-selected": {
+                      color: "primary.main",
+                      backgroundColor: isLight
+                        ? "rgba(251, 191, 36, 0.18)"
+                        : "rgba(251, 191, 36, 0.16)",
+                    },
+                  },
+                }}
+              >
+                <ToggleButton value="grid" aria-label="网格卡片视图">
+                  <Tooltip title="网格卡片">
+                    <GridViewRoundedIcon sx={{ fontSize: 18 }} />
+                  </Tooltip>
+                </ToggleButton>
+                <ToggleButton value="list" aria-label="紧凑列表视图">
+                  <Tooltip title="紧凑列表">
+                    <ViewListRoundedIcon sx={{ fontSize: 18 }} />
+                  </Tooltip>
+                </ToggleButton>
+              </ToggleButtonGroup>
+            </Stack>
+          </Stack>
+        </Paper>
+
+        {/* Sort Menu */}
+        <Menu
+          anchorEl={sortMenuAnchor}
+          open={Boolean(sortMenuAnchor)}
+          onClose={() => setSortMenuAnchor(null)}
+        >
+          {(["name", "date", "size"] as SortField[]).map((field) => (
+            <MenuItem
+              key={field}
+              selected={sortField === field}
+              onClick={() => handleSortFieldChange(field)}
+              sx={{ minWidth: 148 }}
+            >
+              <ListItemIcon sx={{ minWidth: 28 }}>
+                {sortField === field ? (
+                  <CheckRoundedIcon fontSize="small" color="primary" />
+                ) : null}
+              </ListItemIcon>
+              <ListItemText
+                primary={SORT_LABELS[field]}
+                primaryTypographyProps={{ fontSize: "0.875rem" }}
+              />
+            </MenuItem>
+          ))}
+        </Menu>
+
+        {/* File Area */}
+        {loading ? (
+          <Stack
+            alignItems="center"
+            justifyContent="center"
+            spacing={2}
+            sx={{ flexGrow: 1, minHeight: 280 }}
+          >
+            <CircularProgress size={36} thickness={4} />
+            <Typography variant="body2" color="text.secondary">
+              正在读取云盘目录…
+            </Typography>
+          </Stack>
+        ) : (
           <FileGrid
             files={filteredFiles}
+            viewMode={viewMode}
             onCwdChange={(newCwd: string) => setCwd(newCwd)}
             multiSelected={multiSelected}
             onMultiSelect={handleMultiSelect}
-            emptyMessage={<Centered>No files or folders</Centered>}
+            onPreviewImage={setPreviewImage}
+            onEditTextFile={handleEditTextFile}
+            onCopyLink={handleCopyLink}
+            emptyMessage={
+              <Paper
+                elevation={0}
+                sx={{
+                  py: 8,
+                  px: 3,
+                  borderRadius: "22px",
+                  border: "1px dashed",
+                  borderColor: "divider",
+                  backgroundColor: isLight
+                    ? "rgba(255, 255, 255, 0.65)"
+                    : "rgba(30, 27, 24, 0.55)",
+                  textAlign: "center",
+                }}
+              >
+                <Box
+                  sx={{
+                    width: 64,
+                    height: 64,
+                    borderRadius: "20px",
+                    mx: "auto",
+                    mb: 2,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: isLight
+                      ? "rgba(251, 191, 36, 0.16)"
+                      : "rgba(251, 191, 36, 0.12)",
+                    color: "primary.main",
+                  }}
+                >
+                  <FolderOpenRoundedIcon sx={{ fontSize: 34 }} />
+                </Box>
+                <Typography variant="subtitle1" fontWeight={700} gutterBottom>
+                  {search.trim() ? "没有匹配的文件" : "当前目录还是空的"}
+                </Typography>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mb: 2.5 }}
+                >
+                  {search.trim()
+                    ? "试试更换其他关键词，或者清空搜索条件"
+                    : "拖拽文件到这里，或点击下方按钮开始上传"}
+                </Typography>
+                {search.trim() ? (
+                  <Button variant="outlined" onClick={onClearSearch}>
+                    清除搜索
+                  </Button>
+                ) : (
+                  <Button
+                    variant="contained"
+                    startIcon={<CloudUploadRoundedIcon />}
+                    onClick={() => setShowUploadDrawer(true)}
+                  >
+                    立即上传文件
+                  </Button>
+                )}
+              </Paper>
+            }
           />
-        </DropZone>
-      )}
+        )}
+      </Box>
 
+      {/* Mobile Floating Actions */}
       {multiSelected === null && (
-        <>
+        <Box sx={{ display: { xs: "block", sm: "none" } }}>
+          <Tooltip title="打开 TextPad 记事本" placement="left">
+            <Fab
+              size="medium"
+              aria-label="打开 TextPad"
+              onClick={handleOpenTextPadForNew}
+              sx={{
+                position: "fixed",
+                right: 24,
+                bottom: 88,
+                zIndex: 1050,
+                backgroundColor: "background.paper",
+                color: "primary.main",
+                border: "1px solid",
+                borderColor: "divider",
+                boxShadow: "0 8px 20px rgba(0, 0, 0, 0.16)",
+              }}
+            >
+              <NoteAddRoundedIcon />
+            </Fab>
+          </Tooltip>
           <UploadFab onClick={() => setShowUploadDrawer(true)} />
-          <Button
-            variant="contained"
-            startIcon={<NoteAddIcon />}
-            sx={{
-              position: "fixed",
-              bottom: 90,
-              right: 24,
-              zIndex: 999,
-            }}
-            onClick={() => setShowTextPadDrawer(true)}
-          >
-            Open TextPad
-          </Button>
-        </>
+        </Box>
       )}
 
+      {/* Drawers & Lightbox */}
       <UploadDrawer
         open={showUploadDrawer}
         setOpen={setShowUploadDrawer}
         cwd={cwd}
         onUpload={fetchFiles}
+        onCreateFolder={() => {
+          setNewFolderName("");
+          setFolderDialogOpen(true);
+        }}
       />
 
       <TextPadDrawer
         open={showTextPadDrawer}
         setOpen={setShowTextPadDrawer}
         cwd={cwd}
+        initialFile={editingTextFile}
+        editableFiles={editableTextFiles}
+        onSelectFile={setEditingTextFile}
         onUpload={fetchFiles}
+        onNotify={onNotify}
+      />
+
+      <ImagePreviewDialog
+        file={previewImage}
+        images={imageFiles}
+        onClose={() => setPreviewImage(null)}
+        onSelectFile={setPreviewImage}
+        onCopyLink={handleCopyLink}
       />
 
       <MultiSelectToolbar
         multiSelected={multiSelected}
+        totalCount={filteredFiles.length}
+        onSelectAll={handleSelectAll}
         onClose={() => setMultiSelected(null)}
         onDownload={() => {
           if (multiSelected?.length !== 1) return;
           const a = document.createElement("a");
           a.href = `/webdav/${encodeKey(multiSelected[0])}`;
-          a.download = multiSelected[0].split("/").pop()!;
+          a.download = extractFilename(multiSelected[0]);
           a.click();
         }}
-        onRename={async () => {
-          if (multiSelected?.length !== 1) return;
-          const newName = window.prompt("Rename to:");
-          if (!newName) return;
-          await copyPaste(multiSelected[0], cwd + newName, true);
-          fetchFiles();
-        }}
-        onDelete={async () => {
-          if (!multiSelected?.length) return;
-          const filenames = multiSelected
-            .map((key) => key.replace(/\/$/, "").split("/").pop())
-            .join("\n");
-          const confirmMessage = "Delete the following file(s) permanently?";
-          if (!window.confirm(`${confirmMessage}\n${filenames}`)) return;
-          for (const key of multiSelected)
-            await fetch(`/webdav/${encodeKey(key)}`, { method: "DELETE" });
-          fetchFiles();
-        }}
-        onShare={() => {
-          if (multiSelected?.length !== 1) return;
-          const url = new URL(
-            `/webdav/${encodeKey(multiSelected[0])}`,
-            window.location.href
-          );
-          navigator.share({ url: url.toString() });
-        }}
+        onRename={openRenameDialog}
+        onDelete={() => setDeleteDialogOpen(true)}
+        onShare={handleShareSelected}
       />
-    </>
+
+      {/* Create Folder Dialog */}
+      <Dialog
+        open={folderDialogOpen}
+        onClose={() => !dialogSubmitting && setFolderDialogOpen(false)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>新建文件夹</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="文件夹名称"
+            fullWidth
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newFolderName.trim()) {
+                handleCreateFolderSubmit();
+              }
+            }}
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button
+            color="inherit"
+            onClick={() => setFolderDialogOpen(false)}
+            disabled={dialogSubmitting}
+          >
+            取消
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleCreateFolderSubmit}
+            disabled={dialogSubmitting || !newFolderName.trim()}
+          >
+            创建
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Rename Dialog */}
+      <Dialog
+        open={renameDialogOpen}
+        onClose={() => !dialogSubmitting && setRenameDialogOpen(false)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>重命名</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="新文件名"
+            fullWidth
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && renameValue.trim()) {
+                handleRenameSubmit();
+              }
+            }}
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button
+            color="inherit"
+            onClick={() => setRenameDialogOpen(false)}
+            disabled={dialogSubmitting}
+          >
+            取消
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleRenameSubmit}
+            disabled={dialogSubmitting || !renameValue.trim()}
+          >
+            保存
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirm Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => !dialogSubmitting && setDeleteDialogOpen(false)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>确认永久删除</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            以下 {multiSelected?.length ?? 0} 个项目将被永久删除，操作不可撤销：
+          </Typography>
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 1.5,
+              borderRadius: "12px",
+              maxHeight: 160,
+              overflowY: "auto",
+              backgroundColor: "background.default",
+            }}
+          >
+            {(multiSelected ?? []).map((key) => (
+              <Typography key={key} variant="body2" fontWeight={600} noWrap>
+                • {extractFilename(key)}
+              </Typography>
+            ))}
+          </Paper>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button
+            color="inherit"
+            onClick={() => setDeleteDialogOpen(false)}
+            disabled={dialogSubmitting}
+          >
+            取消
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={handleDeleteConfirm}
+            disabled={dialogSubmitting}
+            sx={{
+              background: "#DC2626",
+              "&:hover": { background: "#B91C1C" },
+            }}
+          >
+            确认删除
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
   );
 }
 

@@ -225,26 +225,28 @@ export async function copyPaste(source: string, target: string, move = false) {
     `${WEBDAV_ENDPOINT}${encodeKey(target)}`,
     window.location.href
   );
-  await fetch(uploadUrl, {
+  const res = await fetch(uploadUrl, {
     method: move ? "MOVE" : "COPY",
     headers: { Destination: destinationUrl.href },
   });
+  if (!res.ok) throw new Error(`Failed to ${move ? "rename/move" : "copy"}`);
 }
 
-export async function createFolder(cwd: string) {
-  try {
-    const folderName = window.prompt("Folder name");
-    if (!folderName) return;
-    if (folderName.includes("/")) {
-      window.alert("Invalid folder name");
-      return;
-    }
-    const folderKey = `${cwd}${folderName}`;
-    const uploadUrl = `${WEBDAV_ENDPOINT}${encodeKey(folderKey)}`;
-    await fetch(uploadUrl, { method: "MKCOL" });
-  } catch (error) {
-    console.log(`Create folder failed`);
+export async function createFolder(cwd: string, providedName?: string) {
+  const rawName =
+    providedName !== undefined ? providedName : window.prompt("Folder name");
+  const folderName = rawName?.trim();
+  if (!folderName) return false;
+  if (folderName.includes("/")) {
+    throw new Error("文件夹名称不能包含 /");
   }
+  const folderKey = `${cwd}${folderName}`;
+  const uploadUrl = `${WEBDAV_ENDPOINT}${encodeKey(folderKey)}`;
+  const res = await fetch(uploadUrl, { method: "MKCOL" });
+  if (!res.ok) {
+    throw new Error(`创建文件夹失败 (${res.status})`);
+  }
+  return true;
 }
 
 export async function processTransferTask({
