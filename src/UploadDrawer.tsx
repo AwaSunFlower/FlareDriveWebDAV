@@ -1,7 +1,8 @@
-import React, { forwardRef, useCallback, useMemo } from "react";
+import React, { forwardRef, useCallback, useMemo, useState } from "react";
 import {
   Box,
   Button,
+  CircularProgress,
   Drawer,
   Fab,
   Grid,
@@ -10,12 +11,14 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import CameraAltRoundedIcon from "@mui/icons-material/CameraAltRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import CloudUploadRoundedIcon from "@mui/icons-material/CloudUploadRounded";
 import CreateNewFolderRoundedIcon from "@mui/icons-material/CreateNewFolderRounded";
+import DriveFolderUploadRoundedIcon from "@mui/icons-material/DriveFolderUploadRounded";
 import ImageRoundedIcon from "@mui/icons-material/ImageRounded";
 import UploadRoundedIcon from "@mui/icons-material/UploadRounded";
+import { AuthRequiredError } from "./app/api";
+import { ensureFoldersExist } from "./app/transfer";
 import { useUploadEnqueue } from "./app/transferQueue";
 import { SUNFLOWER_GRADIENT, SUNFLOWER_GRADIENT_HOVER } from "./theme";
 
@@ -25,6 +28,7 @@ function ActionTileButton({
   subtitle,
   color,
   bgColor,
+  disabled,
   onClick,
 }: {
   icon: React.ReactNode;
@@ -32,6 +36,7 @@ function ActionTileButton({
   subtitle: string;
   color: string;
   bgColor: string;
+  disabled?: boolean;
   onClick?: () => void;
 }) {
   const theme = useTheme();
@@ -40,6 +45,7 @@ function ActionTileButton({
   return (
     <Button
       color="inherit"
+      disabled={disabled}
       onClick={onClick}
       sx={{
         width: "100%",
@@ -129,47 +135,103 @@ function UploadDrawer({
   cwd,
   onUpload,
   onCreateFolder,
+  onRequireLogin,
+  onNotify,
 }: {
   open: boolean;
   setOpen: (open: boolean) => void;
   cwd: string;
   onUpload: () => void;
   onCreateFolder: () => void;
+  onRequireLogin: () => void;
+  onNotify: (
+    message: string,
+    severity?: "success" | "info" | "warning" | "error"
+  ) => void;
 }) {
   const theme = useTheme();
   const isLight = theme.palette.mode === "light";
   const uploadEnqueue = useUploadEnqueue();
+  const [preparingFolders, setPreparingFolders] = useState(false);
 
   const handleUpload = useCallback(
-    (action: string) => () => {
+    (action: "image" | "file") => () => {
       const input = document.createElement("input");
       input.type = "file";
-      switch (action) {
-        case "photo":
-          input.accept = "image/*";
-          input.capture = "environment";
-          break;
-        case "image":
-          input.accept = "image/*,video/*";
-          break;
-        case "file":
-          input.accept = "*/*";
-          break;
-      }
+      input.accept = action === "image" ? "image/*,video/*" : "*/*";
       input.multiple = true;
-      input.onchange = async () => {
-        if (!input.files) return;
+      input.onchange = () => {
+        if (!input.files?.length) return;
         const files = Array.from(input.files);
         uploadEnqueue(...files.map((file) => ({ file, basedir: cwd })));
         setOpen(false);
+        onNotify(`已加入 ${files.length} 个文件到上传队列`, "info");
         onUpload();
       };
       input.click();
     },
-    [cwd, onUpload, setOpen, uploadEnqueue]
+    [cwd, onNotify, onUpload, setOpen, uploadEnqueue]
   );
 
-  const takePhoto = useMemo(() => handleUpload("photo"), [handleUpload]);
+  const handleUploadFolder = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.setAttribute("webkitdirectory", "");
+    input.setAttribute("directory", "");
+
+    input.onchange = async () => {
+      if (!input.files?.length) return;
+      const files = Array.from(input.files);
+
+      const staged = files.map((file) => {
+        const relPath =
+          (file as File & { webkitRelativePath?: string }).webkitRelativePath ||
+          file.name;
+        const normalized = relPath.replace(/\\/g, "/").replace(/^\/+/, "");
+        const lastSlash = normalized.lastIndexOf("/");
+        const relativeDir = lastSlash > 0 ? normalized.slice(0, lastSlash) : "";
+        return { file, relativeDir };
+      });
+
+      const relDirs = staged
+        .map((item) => item.relativeDir)
+        .filter((dir) => dir.length > 0);
+
+      setPreparingFolders(true);
+      try {
+        const dirCount = await ensureFoldersExist(cwd, relDirs);
+        uploadEnqueue(
+          ...staged.map(({ file, relativeDir }) => ({
+            file,
+            basedir: relativeDir ? `${cwd}${relativeDir}/` : cwd,
+          }))
+        );
+        setOpen(false);
+        onNotify(
+          dirCount > 0
+            ? `已创建 ${dirCount} 个目录并将 ${files.length} 个文件加入上传队列`
+            : `已加入 ${files.length} 个文件到上传队列`,
+          "info"
+        );
+        onUpload();
+      } catch (err) {
+        if (err instanceof AuthRequiredError) {
+          setOpen(false);
+          onRequireLogin();
+        }
+        onNotify(
+          err instanceof Error ? err.message : "上传文件夹失败",
+          "error"
+        );
+      } finally {
+        setPreparingFolders(false);
+      }
+    };
+
+    input.click();
+  }, [cwd, onNotify, onRequireLogin, onUpload, setOpen, uploadEnqueue]);
+
   const uploadImage = useMemo(() => handleUpload("image"), [handleUpload]);
   const uploadFile = useMemo(() => handleUpload("file"), [handleUpload]);
 
@@ -177,7 +239,7 @@ function UploadDrawer({
     <Drawer
       anchor="bottom"
       open={open}
-      onClose={() => setOpen(false)}
+      onClose={() => !preparingFolders && setOpen(false)}
       PaperProps={{
         sx: {
           borderRadius: "24px 24px 0 0",
@@ -212,10 +274,14 @@ function UploadDrawer({
               上传与新建
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              目标路径：{cwd ? `/${cwd}` : "根目录"} · 支持多选或直接拖拽到页面
+              目标路径：{cwd ? `/${cwd}` : "根目录"} · 支持多选或直接拖拽文件/文件夹到页面
             </Typography>
           </Box>
-          <IconButton aria-label="关闭上传菜单" onClick={() => setOpen(false)}>
+          <IconButton
+            aria-label="关闭上传菜单"
+            disabled={preparingFolders}
+            onClick={() => setOpen(false)}
+          >
             <CloseRoundedIcon />
           </IconButton>
         </Stack>
@@ -232,6 +298,7 @@ function UploadDrawer({
                   ? "rgba(251, 191, 36, 0.22)"
                   : "rgba(251, 191, 36, 0.16)"
               }
+              disabled={preparingFolders}
               onClick={uploadFile}
             />
           </Grid>
@@ -246,21 +313,29 @@ function UploadDrawer({
                   ? "rgba(16, 185, 129, 0.16)"
                   : "rgba(16, 185, 129, 0.16)"
               }
+              disabled={preparingFolders}
               onClick={uploadImage}
             />
           </Grid>
           <Grid item xs={6} sm={3}>
             <ActionTileButton
-              icon={<CameraAltRoundedIcon />}
-              caption="拍摄上传"
-              subtitle="调用相机"
+              icon={
+                preparingFolders ? (
+                  <CircularProgress size={22} color="inherit" />
+                ) : (
+                  <DriveFolderUploadRoundedIcon />
+                )
+              }
+              caption="上传文件夹"
+              subtitle={preparingFolders ? "正在建目录…" : "保留层级结构"}
               color={isLight ? "#0284C7" : "#38BDF8"}
               bgColor={
                 isLight
                   ? "rgba(14, 165, 233, 0.15)"
                   : "rgba(14, 165, 233, 0.16)"
               }
-              onClick={takePhoto}
+              disabled={preparingFolders}
+              onClick={handleUploadFolder}
             />
           </Grid>
           <Grid item xs={6} sm={3}>
@@ -274,6 +349,7 @@ function UploadDrawer({
                   ? "rgba(249, 115, 22, 0.16)"
                   : "rgba(249, 115, 22, 0.17)"
               }
+              disabled={preparingFolders}
               onClick={() => {
                 setOpen(false);
                 onCreateFolder();

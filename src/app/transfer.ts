@@ -288,6 +288,138 @@ export async function createFolder(cwd: string, providedName?: string) {
   return true;
 }
 
+export async function ensureFoldersExist(
+  baseDir: string,
+  relativeDirs: Iterable<string>
+): Promise<number> {
+  const uniqueAncestors = new Set<string>();
+  for (const rawRel of relativeDirs) {
+    const clean = rawRel.replace(/^\/+|\/+$/g, "");
+    if (!clean) continue;
+    const segments = clean.split("/").filter(Boolean);
+    let acc = "";
+    for (const seg of segments) {
+      acc = acc ? `${acc}/${seg}` : seg;
+      uniqueAncestors.add(acc);
+    }
+  }
+
+  const ordered = Array.from(uniqueAncestors).sort(
+    (a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b)
+  );
+
+  for (const relDir of ordered) {
+    const fullKey = `${baseDir}${relDir}`;
+    const res = await fetch(`${WEBDAV_ENDPOINT}${encodeKey(fullKey)}`, {
+      method: "MKCOL",
+      headers: SPA_REQUEST_HEADERS,
+    });
+    if (res.status === 401) {
+      throw new AuthRequiredError("上传文件夹失败：请先登录管理员账号");
+    }
+    // 201 Created = newly created; 405 Method Not Allowed = already exists
+    if (!res.ok && res.status !== 405) {
+      throw new Error(`创建子目录「${relDir}」失败 (${res.status})`);
+    }
+  }
+
+  return ordered.length;
+}
+
+export interface StagedUploadFile {
+  file: File;
+  relativeDir: string;
+}
+
+interface WebkitEntryLike {
+  isFile: boolean;
+  isDirectory: boolean;
+  name: string;
+  file?: (
+    success: (file: File) => void,
+    error?: (err: unknown) => void
+  ) => void;
+  createReader?: () => {
+    readEntries: (
+      success: (entries: WebkitEntryLike[]) => void,
+      error?: (err: unknown) => void
+    ) => void;
+  };
+}
+
+async function readDirectoryEntries(
+  entry: WebkitEntryLike,
+  parentPath: string,
+  filesOut: StagedUploadFile[],
+  dirsOut: Set<string>
+): Promise<void> {
+  if (entry.isFile && entry.file) {
+    const file = await new Promise<File | null>((resolve) => {
+      entry.file!(
+        (f) => resolve(f),
+        () => resolve(null)
+      );
+    });
+    if (file) {
+      filesOut.push({ file, relativeDir: parentPath });
+    }
+    return;
+  }
+
+  if (entry.isDirectory && entry.createReader) {
+    const nextDir = parentPath ? `${parentPath}/${entry.name}` : entry.name;
+    dirsOut.add(nextDir);
+    const reader = entry.createReader();
+    const allChildren: WebkitEntryLike[] = [];
+
+    while (true) {
+      const batch = await new Promise<WebkitEntryLike[]>((resolve) => {
+        reader.readEntries(
+          (entries) => resolve(entries),
+          () => resolve([])
+        );
+      });
+      if (!batch.length) break;
+      allChildren.push(...batch);
+    }
+
+    for (const child of allChildren) {
+      await readDirectoryEntries(child, nextDir, filesOut, dirsOut);
+    }
+  }
+}
+
+export async function collectDroppedEntries(
+  dataTransfer: DataTransfer
+): Promise<{ files: StagedUploadFile[]; dirs: string[] }> {
+  const items = Array.from(dataTransfer.items || []);
+  const entries = items
+    .map((item): WebkitEntryLike | null => {
+      const withEntry = item as DataTransferItem & {
+        webkitGetAsEntry?: () => unknown;
+      };
+      return typeof withEntry.webkitGetAsEntry === "function"
+        ? ((withEntry.webkitGetAsEntry() as WebkitEntryLike | null) ?? null)
+        : null;
+    })
+    .filter((entry): entry is WebkitEntryLike => entry !== null);
+
+  if (entries.length > 0) {
+    const filesOut: StagedUploadFile[] = [];
+    const dirsOut = new Set<string>();
+    for (const entry of entries) {
+      await readDirectoryEntries(entry, "", filesOut, dirsOut);
+    }
+    return { files: filesOut, dirs: Array.from(dirsOut) };
+  }
+
+  const plainFiles = Array.from(dataTransfer.files || []).map((file) => ({
+    file,
+    relativeDir: "",
+  }));
+  return { files: plainFiles, dirs: [] };
+}
+
 export async function processTransferTask({
   task,
   onTaskProgress,

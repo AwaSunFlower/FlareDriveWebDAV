@@ -65,7 +65,13 @@ import {
   setFolderPrivacy,
   SPA_REQUEST_HEADERS,
 } from "./app/api";
-import { copyPaste, createFolder, fetchPath } from "./app/transfer";
+import {
+  collectDroppedEntries,
+  copyPaste,
+  createFolder,
+  ensureFoldersExist,
+  fetchPath,
+} from "./app/transfer";
 import { useTransferQueue, useUploadEnqueue } from "./app/transferQueue";
 import { humanReadableSize } from "./app/utils";
 
@@ -624,26 +630,52 @@ function Main({
           setDragging(false);
         }
       }}
-      onDrop={(e) => {
+      onDrop={async (e) => {
         e.preventDefault();
         dragCounter.current = 0;
         setDragging(false);
-        if (!e.dataTransfer.files?.length) return;
+        if (!e.dataTransfer.files?.length && !e.dataTransfer.items?.length) {
+          return;
+        }
         if (!authenticated) {
           onNotify("访客只读模式下无法上传，请先登录管理员账号", "info");
           onRequireLogin();
           return;
         }
-        uploadEnqueue(
-          ...Array.from(e.dataTransfer.files).map((file) => ({
-            file,
-            basedir: cwd,
-          }))
-        );
-        onNotify(
-          `已加入 ${e.dataTransfer.files.length} 个文件到上传队列`,
-          "info"
-        );
+        try {
+          const { files: droppedFiles, dirs } = await collectDroppedEntries(
+            e.dataTransfer
+          );
+          if (!droppedFiles.length && !dirs.length) return;
+          if (dirs.length > 0) {
+            await ensureFoldersExist(cwd, dirs);
+          }
+          if (droppedFiles.length > 0) {
+            uploadEnqueue(
+              ...droppedFiles.map(({ file, relativeDir }) => ({
+                file,
+                basedir: relativeDir ? `${cwd}${relativeDir}/` : cwd,
+              }))
+            );
+            onNotify(
+              dirs.length > 0
+                ? `已创建 ${dirs.length} 个目录并将 ${droppedFiles.length} 个文件加入上传队列`
+                : `已加入 ${droppedFiles.length} 个文件到上传队列`,
+              "info"
+            );
+          } else {
+            onNotify(`已创建 ${dirs.length} 个空文件夹`, "success");
+            fetchFiles(false);
+          }
+        } catch (err) {
+          if (err instanceof AuthRequiredError) {
+            onRequireLogin();
+          }
+          onNotify(
+            err instanceof Error ? err.message : "拖拽上传失败",
+            "error"
+          );
+        }
       }}
     >
       {/* Drag Overlay */}
@@ -1105,11 +1137,13 @@ function Main({
         open={showUploadDrawer}
         setOpen={setShowUploadDrawer}
         cwd={cwd}
-        onUpload={fetchFiles}
+        onUpload={() => fetchFiles(false)}
         onCreateFolder={() => {
           setNewFolderName("");
           setFolderDialogOpen(true);
         }}
+        onRequireLogin={onRequireLogin}
+        onNotify={onNotify}
       />
 
       <TextPadDrawer
