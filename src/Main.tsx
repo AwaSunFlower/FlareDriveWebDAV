@@ -289,33 +289,59 @@ function Main({
     }
   };
 
-  const fetchFiles = useCallback(() => {
-    setLoading(true);
-    onRefreshingChange(true);
-    fetchPath(cwd)
-      .then((fetchedFiles) => {
-        setFiles(fetchedFiles);
-        setMultiSelected(null);
-      })
-      .catch((err: unknown) => {
-        if (err instanceof AuthRequiredError) {
-          onRequireLogin();
-          return;
-        }
-        onNotify(
-          err instanceof Error ? err.message : "加载文件列表失败",
-          "error"
-        );
-      })
-      .finally(() => {
-        setLoading(false);
-        onRefreshingChange(false);
-      });
-  }, [cwd, onNotify, onRefreshingChange, onRequireLogin]);
+  const callbacksRef = useRef({
+    onNotify,
+    onRefreshingChange,
+    onRequireLogin,
+  });
+  callbacksRef.current = {
+    onNotify,
+    onRefreshingChange,
+    onRequireLogin,
+  };
+
+  const fetchSeqRef = useRef(0);
+
+  const fetchFiles = useCallback(
+    (showFullLoader = false) => {
+      const seq = ++fetchSeqRef.current;
+      if (showFullLoader) setLoading(true);
+      callbacksRef.current.onRefreshingChange(true);
+      fetchPath(cwd)
+        .then((fetchedFiles) => {
+          if (seq !== fetchSeqRef.current) return;
+          setFiles(fetchedFiles);
+          setMultiSelected(null);
+        })
+        .catch((err: unknown) => {
+          if (seq !== fetchSeqRef.current) return;
+          if (err instanceof AuthRequiredError) {
+            callbacksRef.current.onRequireLogin();
+            return;
+          }
+          callbacksRef.current.onNotify(
+            err instanceof Error ? err.message : "加载文件列表失败",
+            "error"
+          );
+        })
+        .finally(() => {
+          if (seq !== fetchSeqRef.current) return;
+          setLoading(false);
+          callbacksRef.current.onRefreshingChange(false);
+        });
+    },
+    [cwd]
+  );
 
   useEffect(() => {
-    fetchFiles();
-  }, [fetchFiles, refreshToken, authenticated]);
+    fetchFiles(true);
+  }, [fetchFiles, authenticated]);
+
+  useEffect(() => {
+    if (refreshToken > 0) {
+      fetchFiles(false);
+    }
+  }, [fetchFiles, refreshToken]);
 
   useEffect(() => {
     if (resetRootToken > 0) {

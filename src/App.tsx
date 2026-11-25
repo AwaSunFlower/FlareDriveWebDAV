@@ -123,6 +123,26 @@ function App() {
     []
   );
 
+  const handleClearSearch = useCallback(() => {
+    setSearch("");
+  }, []);
+
+  const handleOpenLogin = useCallback(() => {
+    setShowLoginDialog(true);
+  }, []);
+
+  const handleCloseLogin = useCallback(() => {
+    setShowLoginDialog(false);
+  }, []);
+
+  const handleOpenStats = useCallback(() => {
+    setShowStatsDialog(true);
+  }, []);
+
+  const handleCloseStats = useCallback(() => {
+    setShowStatsDialog(false);
+  }, []);
+
   const handleLogoClick = useCallback(() => {
     setSearch("");
     setResetRootToken((v) => v + 1);
@@ -197,19 +217,19 @@ function App() {
               colorMode={colorMode}
               onToggleColorMode={handleToggleColorMode}
               setShowProgressDialog={setShowProgressDialog}
-              onOpenStats={() => setShowStatsDialog(true)}
+              onOpenStats={handleOpenStats}
               authenticated={authStatus.authenticated}
               username={authStatus.username}
-              onOpenLogin={() => setShowLoginDialog(true)}
+              onOpenLogin={handleOpenLogin}
               onLogout={handleLogout}
             />
             <Main
               search={search}
-              onClearSearch={() => setSearch("")}
+              onClearSearch={handleClearSearch}
               refreshToken={refreshToken}
               resetRootToken={resetRootToken}
               authStatus={authStatus}
-              onRequireLogin={() => setShowLoginDialog(true)}
+              onRequireLogin={handleOpenLogin}
               onPrivateDirsChange={handlePrivateDirsChange}
               onRefreshingChange={setRefreshing}
               onNotify={handleNotify}
@@ -233,13 +253,13 @@ function App() {
 
         <LoginDialog
           open={showLoginDialog}
-          onClose={() => setShowLoginDialog(false)}
+          onClose={handleCloseLogin}
           onSuccess={handleLoginSuccess}
         />
 
         <StorageStatsDialog
           open={showStatsDialog}
-          onClose={() => setShowStatsDialog(false)}
+          onClose={handleCloseStats}
         />
 
         <ProgressDialog
