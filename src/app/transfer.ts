@@ -6,8 +6,14 @@ import { TransferTask } from "./transferQueue";
 
 const WEBDAV_ENDPOINT = "/webdav/";
 
-export async function fetchPath(path: string) {
-  const res = await fetch(`${WEBDAV_ENDPOINT}${encodeKey(path)}`, {
+export async function fetchPath(path: string, shareToken?: string) {
+  const url = shareToken
+    ? `${WEBDAV_ENDPOINT}${encodeKey(path)}?share=${encodeURIComponent(
+        shareToken
+      )}`
+    : `${WEBDAV_ENDPOINT}${encodeKey(path)}`;
+
+  const res = await fetch(url, {
     method: "PROPFIND",
     headers: {
       Depth: "1",

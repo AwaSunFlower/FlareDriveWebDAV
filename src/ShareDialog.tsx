@@ -8,7 +8,6 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
-  Divider,
   FormControlLabel,
   IconButton,
   InputAdornment,
@@ -21,18 +20,18 @@ import {
 } from "@mui/material";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
+import FolderSharedRoundedIcon from "@mui/icons-material/FolderSharedRounded";
 import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import LockRoundedIcon from "@mui/icons-material/LockRounded";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import ScheduleRoundedIcon from "@mui/icons-material/ScheduleRounded";
-import { encodeKey, extractFilename, FileItem } from "./FileGrid";
+import { extractFilename, FileItem, isDirectory } from "./FileGrid";
 import { createSignedShare } from "./app/api";
 
 interface ShareDialogProps {
   file: FileItem | null;
   authenticated: boolean;
   isPrivate: boolean;
-  publicRead: boolean;
   onClose: () => void;
   onRequireLogin: () => void;
   onNotify: (
@@ -46,13 +45,13 @@ const TTL_OPTIONS = [
   { label: "24 小时", seconds: 24 * 60 * 60 },
   { label: "7 天", seconds: 7 * 24 * 60 * 60 },
   { label: "30 天", seconds: 30 * 24 * 60 * 60 },
+  { label: "长期有效", seconds: 3650 * 24 * 60 * 60 },
 ];
 
 const ShareDialog: React.FC<ShareDialogProps> = ({
   file,
   authenticated,
   isPrivate,
-  publicRead,
   onClose,
   onRequireLogin,
   onNotify,
@@ -63,13 +62,16 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
   const [ttlSeconds, setTtlSeconds] = useState(24 * 60 * 60);
   const [forceDownload, setForceDownload] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [signedUrl, setSignedUrl] = useState<string | null>(null);
-  const [expiresAt, setExpiresAt] = useState<number | null>(null);
+  const [shareResult, setShareResult] = useState<{
+    pageUrl: string;
+    directUrl: string | null;
+    scope: "file" | "dir";
+    expiresAt: number;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setSignedUrl(null);
-    setExpiresAt(null);
+    setShareResult(null);
     setError(null);
     setTtlSeconds(24 * 60 * 60);
     setForceDownload(false);
@@ -78,11 +80,8 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
   if (!file) return null;
 
   const filename = extractFilename(file.key);
-  const directPublicUrl = new URL(
-    `/webdav/${encodeKey(file.key)}`,
-    window.location.href
-  ).toString();
-  const canUsePublicLink = publicRead && !isPrivate;
+  const isDir = isDirectory(file);
+  const isLongTerm = ttlSeconds >= 365 * 24 * 60 * 60;
 
   const copyText = async (text: string, label: string) => {
     try {
@@ -104,11 +103,18 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
       const result = await createSignedShare(
         file.key,
         ttlSeconds,
-        forceDownload
+        !isDir && forceDownload
       );
-      setSignedUrl(result.url);
-      setExpiresAt(result.expiresAt);
-      onNotify("限时加密分享链接已生成", "success");
+      setShareResult({
+        pageUrl: result.pageUrl,
+        directUrl: result.directUrl,
+        scope: result.scope,
+        expiresAt: result.expiresAt,
+      });
+      onNotify(
+        isDir ? "加密文件夹分享链接已生成" : "加密文件分享链接已生成",
+        "success"
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "生成失败");
     } finally {
@@ -120,7 +126,12 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
     <Dialog open={Boolean(file)} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle sx={{ pb: 1 }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between">
-          <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.25}
+            sx={{ minWidth: 0 }}
+          >
             <Box
               sx={{
                 width: 36,
@@ -136,13 +147,22 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
                 flexShrink: 0,
               }}
             >
-              <LinkRoundedIcon fontSize="small" />
+              {isDir ? (
+                <FolderSharedRoundedIcon fontSize="small" />
+              ) : (
+                <LinkRoundedIcon fontSize="small" />
+              )}
             </Box>
             <Box sx={{ minWidth: 0 }}>
               <Typography variant="h6" sx={{ fontSize: "1.02rem" }}>
-                分享文件
+                {isDir ? "加密分享文件夹" : "加密分享文件"}
               </Typography>
-              <Typography variant="caption" color="text.secondary" noWrap display="block">
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                noWrap
+                display="block"
+              >
                 {filename}
               </Typography>
             </Box>
@@ -153,87 +173,88 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
         </Stack>
       </DialogTitle>
 
-      <DialogContent sx={{ pt: 1.5 }}>
-        <Stack spacing={2.5}>
-          {/* Timed Encrypted Share Section */}
-          <Box
-            sx={{
-              p: 2,
-              borderRadius: "16px",
-              border: "1px solid",
-              borderColor: "divider",
-              backgroundColor: isLight
-                ? "rgba(251, 191, 36, 0.05)"
-                : "rgba(251, 191, 36, 0.04)",
-            }}
+      <DialogContent sx={{ pt: 1.5, pb: 3 }}>
+        <Box
+          sx={{
+            p: 2.25,
+            borderRadius: "16px",
+            border: "1px solid",
+            borderColor: "divider",
+            backgroundColor: isLight
+              ? "rgba(251, 191, 36, 0.05)"
+              : "rgba(251, 191, 36, 0.04)",
+          }}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="space-between"
+            sx={{ mb: 1 }}
           >
-            <Stack
-              direction="row"
-              alignItems="center"
-              justifyContent="space-between"
-              sx={{ mb: 1.25 }}
-            >
-              <Stack direction="row" alignItems="center" spacing={0.75}>
-                <ScheduleRoundedIcon
-                  sx={{ fontSize: 18, color: "primary.main" }}
-                />
-                <Typography variant="subtitle2" fontWeight={700}>
-                  限时加密签名链接
-                </Typography>
-              </Stack>
-              {isPrivate && (
+            <Stack direction="row" alignItems="center" spacing={0.75}>
+              <ScheduleRoundedIcon
+                sx={{ fontSize: 18, color: "primary.main" }}
+              />
+              <Typography variant="subtitle2" fontWeight={700}>
+                HMAC-SHA256 签名通行链接
+              </Typography>
+            </Stack>
+            {isPrivate && (
+              <Chip
+                icon={<LockRoundedIcon sx={{ fontSize: "14px !important" }} />}
+                label="私密内容专属放行"
+                size="small"
+                color="primary"
+                variant="outlined"
+                sx={{ height: 22, fontSize: "0.7rem" }}
+              />
+            )}
+          </Stack>
+
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            display="block"
+            sx={{ mb: 1.75, lineHeight: 1.6 }}
+          >
+            {isDir
+              ? "访客打开此链接后，将自动解锁该文件夹及其子目录内的全部文件与清晰原图，不会被访客加密拦截；但无法查看其他目录的加密文件。"
+              : "访客通过此链接访问不会触发文件加密或图片模糊拦截，可直接高清预览或下载此文件。"}
+          </Typography>
+
+          <Stack
+            direction="row"
+            spacing={0.85}
+            flexWrap="wrap"
+            useFlexGap
+            sx={{ mb: 1.75 }}
+          >
+            {TTL_OPTIONS.map((opt) => {
+              const selected = ttlSeconds === opt.seconds;
+              return (
                 <Chip
-                  icon={<LockRoundedIcon sx={{ fontSize: "14px !important" }} />}
-                  label="私密文件专属可用"
-                  size="small"
-                  color="primary"
-                  variant="outlined"
-                  sx={{ height: 22, fontSize: "0.7rem" }}
+                  key={opt.seconds}
+                  label={opt.label}
+                  clickable
+                  color={selected ? "primary" : "default"}
+                  variant={selected ? "filled" : "outlined"}
+                  onClick={() => {
+                    setTtlSeconds(opt.seconds);
+                    setShareResult(null);
+                  }}
+                  sx={{ fontWeight: 600 }}
                 />
-              )}
-            </Stack>
+              );
+            })}
+          </Stack>
 
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              display="block"
-              sx={{ mb: 1.5 }}
-            >
-              使用 HMAC-SHA256 签名，仅限访问此单个文件，到期后自动失效（即使位于私密目录也可安全分享）。
-            </Typography>
-
-            <Stack
-              direction="row"
-              spacing={0.85}
-              flexWrap="wrap"
-              useFlexGap
-              sx={{ mb: 1.5 }}
-            >
-              {TTL_OPTIONS.map((opt) => {
-                const selected = ttlSeconds === opt.seconds;
-                return (
-                  <Chip
-                    key={opt.seconds}
-                    label={opt.label}
-                    clickable
-                    color={selected ? "primary" : "default"}
-                    variant={selected ? "filled" : "outlined"}
-                    onClick={() => {
-                      setTtlSeconds(opt.seconds);
-                      setSignedUrl(null);
-                    }}
-                    sx={{ fontWeight: 600 }}
-                  />
-                );
-              })}
-            </Stack>
-
-            <Stack
-              direction={{ xs: "column", sm: "row" }}
-              alignItems={{ xs: "stretch", sm: "center" }}
-              justifyContent="space-between"
-              spacing={1}
-            >
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            alignItems={{ xs: "stretch", sm: "center" }}
+            justifyContent="space-between"
+            spacing={1}
+          >
+            {!isDir ? (
               <FormControlLabel
                 control={
                   <Switch
@@ -241,55 +262,75 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
                     checked={forceDownload}
                     onChange={(e) => {
                       setForceDownload(e.target.checked);
-                      setSignedUrl(null);
+                      setShareResult(null);
                     }}
                   />
                 }
                 label={
                   <Typography variant="body2" color="text.secondary">
-                    打开即触发下载
+                    直链打开即触发下载
                   </Typography>
                 }
               />
-
-              <Button
-                variant="contained"
-                size="small"
-                onClick={handleGenerateSignedLink}
-                disabled={generating}
-                sx={{ px: 2 }}
-              >
-                {generating ? (
-                  <CircularProgress size={16} color="inherit" />
-                ) : authenticated ? (
-                  "生成限时链接"
-                ) : (
-                  "登录以生成限时链接"
-                )}
-              </Button>
-            </Stack>
-
-            {error && (
-              <Alert severity="error" sx={{ mt: 1.5, borderRadius: "10px" }}>
-                {error}
-              </Alert>
+            ) : (
+              <Typography variant="caption" color="text.secondary">
+                仅开放只读浏览、预览与下载权限
+              </Typography>
             )}
 
-            {signedUrl && (
-              <Box sx={{ mt: 2 }}>
+            <Button
+              variant="contained"
+              size="small"
+              onClick={handleGenerateSignedLink}
+              disabled={generating}
+              sx={{ px: 2.25 }}
+            >
+              {generating ? (
+                <CircularProgress size={16} color="inherit" />
+              ) : authenticated ? (
+                "生成分享链接"
+              ) : (
+                "登录以生成分享链接"
+              )}
+            </Button>
+          </Stack>
+
+          {error && (
+            <Alert severity="error" sx={{ mt: 1.5, borderRadius: "10px" }}>
+              {error}
+            </Alert>
+          )}
+
+          {shareResult && (
+            <Stack spacing={1.75} sx={{ mt: 2.25 }}>
+              {/* Recommended Share Page URL */}
+              <Box>
+                <Typography
+                  variant="caption"
+                  fontWeight={700}
+                  color="primary.main"
+                  sx={{ mb: 0.6, display: "block" }}
+                >
+                  {isDir
+                    ? "文件夹分享链接（发给访客即可直接浏览）"
+                    : "分享预览页链接（推荐发给好友，支持在线高清预览与下载）"}
+                </Typography>
                 <TextField
                   size="small"
                   fullWidth
-                  value={signedUrl}
+                  value={shareResult.pageUrl}
                   InputProps={{
                     readOnly: true,
                     endAdornment: (
                       <InputAdornment position="end">
-                        <Tooltip title="复制限时链接">
+                        <Tooltip title="复制分享页链接">
                           <IconButton
                             size="small"
                             color="primary"
-                            onClick={() => copyText(signedUrl, "限时分享链接")}
+                            aria-label="复制分享页链接"
+                            onClick={() =>
+                              copyText(shareResult.pageUrl, "分享页链接")
+                            }
                           >
                             <ContentCopyRoundedIcon fontSize="small" />
                           </IconButton>
@@ -298,7 +339,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
                           <IconButton
                             size="small"
                             component="a"
-                            href={signedUrl}
+                            href={shareResult.pageUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                           >
@@ -316,65 +357,62 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
                     },
                   }}
                 />
-                {expiresAt && (
+              </Box>
+
+              {/* Direct Signed File Link (for downloaders / direct embedding) */}
+              {shareResult.directUrl && (
+                <Box>
                   <Typography
                     variant="caption"
+                    fontWeight={600}
                     color="text.secondary"
-                    sx={{ mt: 0.75, display: "block" }}
+                    sx={{ mb: 0.6, display: "block" }}
                   >
-                    有效期至：{new Date(expiresAt).toLocaleString()}
+                    签名文件直链（适合下载器 / 播放器 / 外链使用）
                   </Typography>
-                )}
-              </Box>
-            )}
-          </Box>
+                  <TextField
+                    size="small"
+                    fullWidth
+                    value={shareResult.directUrl}
+                    InputProps={{
+                      readOnly: true,
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <Tooltip title="复制签名直链">
+                            <IconButton
+                              size="small"
+                              aria-label="复制签名直链"
+                              onClick={() =>
+                                copyText(shareResult.directUrl!, "签名文件直链")
+                              }
+                            >
+                              <ContentCopyRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </InputAdornment>
+                      ),
+                    }}
+                    sx={{
+                      "& .MuiOutlinedInput-root": {
+                        backgroundColor: "background.paper",
+                        borderRadius: "10px",
+                        fontSize: "0.78rem",
+                      },
+                    }}
+                  />
+                </Box>
+              )}
 
-          {/* Standard Public Direct Link */}
-          {canUsePublicLink && (
-            <>
-              <Divider>
-                <Typography variant="caption" color="text.secondary">
-                  或使用公开直链
-                </Typography>
-              </Divider>
-              <Box>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ mb: 0.75, display: "block" }}
-                >
-                  永久直链（仅在公开只读开启且文件不在私密目录时可免登录访问）：
-                </Typography>
-                <TextField
-                  size="small"
-                  fullWidth
-                  value={directPublicUrl}
-                  InputProps={{
-                    readOnly: true,
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <Tooltip title="复制公开直链">
-                          <IconButton
-                            size="small"
-                            onClick={() => copyText(directPublicUrl, "公开直链")}
-                          >
-                            <ContentCopyRoundedIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </InputAdornment>
-                    ),
-                  }}
-                  sx={{
-                    "& .MuiOutlinedInput-root": {
-                      borderRadius: "10px",
-                      fontSize: "0.8rem",
-                    },
-                  }}
-                />
-              </Box>
-            </>
+              <Typography variant="caption" color="text.secondary">
+                {isLongTerm
+                  ? "有效期：长期有效"
+                  : `有效期至：${new Date(
+                      shareResult.expiresAt
+                    ).toLocaleString()}`}
+              </Typography>
+            </Stack>
           )}
-        </Stack>
+        </Box>
       </DialogContent>
     </Dialog>
   );

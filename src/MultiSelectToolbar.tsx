@@ -134,22 +134,24 @@ function MultiSelectToolbar({
               </span>
             </Tooltip>
 
-            <Tooltip title="分享 / 限时直链">
-              <span>
-                <IconButton
-                  size="small"
-                  disabled={!isSingleFile}
-                  onClick={onShare}
-                  sx={{
-                    color: "#FAF6F0",
-                    "&.Mui-disabled": { color: "rgba(255,255,255,0.28)" },
-                    "&:hover": { color: "#FBBF24" },
-                  }}
-                >
-                  <ShareRoundedIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
+            {authenticated && (
+              <Tooltip title="分享 / 加密链接">
+                <span>
+                  <IconButton
+                    size="small"
+                    disabled={count !== 1}
+                    onClick={onShare}
+                    sx={{
+                      color: "#FAF6F0",
+                      "&.Mui-disabled": { color: "rgba(255,255,255,0.28)" },
+                      "&:hover": { color: "#FBBF24" },
+                    }}
+                  >
+                    <ShareRoundedIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            )}
 
             {authenticated && (
               <>

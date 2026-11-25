@@ -5,10 +5,13 @@ import {
   hasPathTraversal,
   INTERNAL_PREFIX,
   isAuthConfigured,
+  isGuestFileLockEnabled,
+  isPathAllowedByShare,
   isPrivatePath,
   isPublicReadEnabled,
+  normalizeDrivePath,
+  parseVerifiedShareToken,
   THUMBNAILS_PREFIX,
-  verifyShareToken,
 } from "../../utils/auth";
 import { notFound, parseBucketPath, RequestHandlerParams } from "./utils";
 import { handleRequestCopy } from "./copy";
@@ -49,7 +52,7 @@ const HANDLERS: Record<
   DELETE: handleRequestDelete,
 };
 
-function unauthorizedResponse(request: Request): Response {
+function unauthorizedResponse(request: Request, message = "Unauthorized"): Response {
   const headers = new Headers({
     "Cache-Control": "no-store",
   });
@@ -58,7 +61,7 @@ function unauthorizedResponse(request: Request): Response {
   if (request.headers.get("X-Requested-With") !== "SunflowerDrive") {
     headers.set("WWW-Authenticate", 'Basic realm="WebDAV"');
   }
-  return new Response("Unauthorized", { status: 401, headers });
+  return new Response(message, { status: 401, headers });
 }
 
 export const onRequest: PagesFunction<DriveEnv> = async function (context) {
@@ -82,33 +85,81 @@ export const onRequest: PagesFunction<DriveEnv> = async function (context) {
 
   const auth = await authenticateRequest(request, env);
   const url = new URL(request.url);
-  const shareToken = url.searchParams.get("share");
+  const shareToken = url.searchParams.get("share") || "";
 
   let hiddenPrivateDirs: string[] = [];
   let isSharedAccess = false;
 
   if (!auth.authenticated) {
-    // 1. Allow valid signed temporary share link for single-file GET/HEAD
-    if (
-      shareToken &&
-      (method === "GET" || method === "HEAD") &&
-      (await verifyShareToken(env, shareToken, path))
-    ) {
-      isSharedAccess = true;
-    } else if (
-      isPublicReadEnabled(env) &&
-      ["GET", "HEAD", "PROPFIND"].includes(method)
-    ) {
-      // 2. Public read mode — hide private directories & files from unauthenticated visitors
-      hiddenPrivateDirs = await getEffectivePrivateDirs(bucket, env);
-      if (path !== "" && isPrivatePath(path, hiddenPrivateDirs)) {
-        return notFound();
+    // 1. Check valid signed share link (file share OR folder share) FIRST
+    // so visitors arriving from share links are NEVER isolated or blocked.
+    const verifiedShare = shareToken
+      ? await parseVerifiedShareToken(env, shareToken)
+      : null;
+
+    if (verifiedShare) {
+      if (path.startsWith(THUMBNAILS_PREFIX) && (method === "GET" || method === "HEAD")) {
+        // Allow loading thumbnails ONLY for files authorized by the share token
+        const forKey = normalizeDrivePath(url.searchParams.get("for") || "");
+        if (forKey && (await isPathAllowedByShare(verifiedShare, forKey))) {
+          const targetObj = await bucket.head(forKey);
+          const thumbHash = path
+            .slice(THUMBNAILS_PREFIX.length)
+            .replace(/\.png$/i, "");
+          if (targetObj?.customMetadata?.thumbnail === thumbHash) {
+            isSharedAccess = true;
+          }
+        }
+      } else if (
+        verifiedShare.scope === "file" &&
+        (method === "GET" || method === "HEAD") &&
+        (await isPathAllowedByShare(verifiedShare, path))
+      ) {
+        isSharedAccess = true;
+      } else if (
+        verifiedShare.scope === "dir" &&
+        ["GET", "HEAD", "PROPFIND"].includes(method) &&
+        (await isPathAllowedByShare(verifiedShare, path))
+      ) {
+        isSharedAccess = true;
       }
-    } else {
-      if (!isAuthConfigured(env)) {
-        return new Response("WebDAV protocol is not enabled", { status: 403 });
+    }
+
+    if (!isSharedAccess) {
+      if (isPublicReadEnabled(env)) {
+        hiddenPrivateDirs = await getEffectivePrivateDirs(bucket, env);
+
+        if (method === "PROPFIND") {
+          // Guests can browse public folders and see directory listings
+          if (path !== "" && isPrivatePath(path, hiddenPrivateDirs)) {
+            return notFound();
+          }
+        } else if (
+          (method === "GET" || method === "HEAD") &&
+          !isGuestFileLockEnabled(env)
+        ) {
+          // Optional escape hatch only if GUEST_ALLOW_FILE_READ=1 is explicitly set
+          if (path !== "" && isPrivatePath(path, hiddenPrivateDirs)) {
+            return notFound();
+          }
+        } else {
+          // Guest file encryption lock: block direct file/thumbnail reads without auth or share token
+          if (!isAuthConfigured(env)) {
+            return new Response("WebDAV protocol is not enabled", {
+              status: 403,
+            });
+          }
+          return unauthorizedResponse(
+            request,
+            "文件已加密保护，请登录管理员或使用有效分享链接访问"
+          );
+        }
+      } else {
+        if (!isAuthConfigured(env)) {
+          return new Response("WebDAV protocol is not enabled", { status: 403 });
+        }
+        return unauthorizedResponse(request);
       }
-      return unauthorizedResponse(request);
     }
   }
 

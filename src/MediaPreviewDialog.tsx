@@ -15,13 +15,16 @@ import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import ShareRoundedIcon from "@mui/icons-material/ShareRounded";
-import { encodeKey, extractFilename, FileItem } from "./FileGrid";
+import { extractFilename, FileItem } from "./FileGrid";
 import { getFileCategory } from "./MimeIcon";
+import { buildWebdavUrl } from "./app/api";
 import { humanReadableSize } from "./app/utils";
 
 interface MediaPreviewDialogProps {
   file: FileItem | null;
   images: FileItem[];
+  authenticated: boolean;
+  shareToken?: string;
   onClose: () => void;
   onSelectFile: (file: FileItem) => void;
   onCopyLink: (file: FileItem) => void;
@@ -31,6 +34,8 @@ interface MediaPreviewDialogProps {
 const MediaPreviewDialog: React.FC<MediaPreviewDialogProps> = ({
   file,
   images,
+  authenticated,
+  shareToken,
   onClose,
   onSelectFile,
   onCopyLink,
@@ -62,7 +67,8 @@ const MediaPreviewDialog: React.FC<MediaPreviewDialogProps> = ({
 
   if (!file) return null;
 
-  const fileUrl = `/webdav/${encodeKey(file.key)}`;
+  const fileUrl = buildWebdavUrl(file.key, { shareToken });
+  const downloadUrl = buildWebdavUrl(file.key, { shareToken, download: true });
 
   return (
     <Dialog
@@ -112,16 +118,18 @@ const MediaPreviewDialog: React.FC<MediaPreviewDialogProps> = ({
         </Box>
 
         <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
-          <Tooltip title="限时加密分享">
-            <IconButton
-              size="small"
-              onClick={() => onOpenShare(file)}
-              sx={{ color: "#FBBF24" }}
-            >
-              <ShareRoundedIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="复制直链">
+          {authenticated && (
+            <Tooltip title="加密分享链接">
+              <IconButton
+                size="small"
+                onClick={() => onOpenShare(file)}
+                sx={{ color: "#FBBF24" }}
+              >
+                <ShareRoundedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
+          <Tooltip title="复制当前链接">
             <IconButton
               size="small"
               onClick={() => onCopyLink(file)}
@@ -134,7 +142,7 @@ const MediaPreviewDialog: React.FC<MediaPreviewDialogProps> = ({
             <IconButton
               size="small"
               component="a"
-              href={`${fileUrl}?download=1`}
+              href={downloadUrl}
               download={filename}
               sx={{ color: "#F5F0E8" }}
             >

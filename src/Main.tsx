@@ -6,6 +6,7 @@ import React, {
   useState,
 } from "react";
 import {
+  Alert,
   Box,
   Breadcrumbs,
   Button,
@@ -36,6 +37,7 @@ import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
 import CloudUploadRoundedIcon from "@mui/icons-material/CloudUploadRounded";
 import CreateNewFolderRoundedIcon from "@mui/icons-material/CreateNewFolderRounded";
 import FolderOpenRoundedIcon from "@mui/icons-material/FolderOpenRounded";
+import FolderSharedRoundedIcon from "@mui/icons-material/FolderSharedRounded";
 import GridViewRoundedIcon from "@mui/icons-material/GridViewRounded";
 import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import LockPersonRoundedIcon from "@mui/icons-material/LockPersonRounded";
@@ -60,8 +62,10 @@ import ShareDialog from "./ShareDialog";
 import TextPadDrawer from "./TextPadDrawer";
 import UploadDrawer, { UploadFab } from "./UploadDrawer";
 import {
+  ActiveDirShare,
   AuthRequiredError,
   AuthStatus,
+  buildWebdavUrl,
   setFolderPrivacy,
   SPA_REQUEST_HEADERS,
 } from "./app/api";
@@ -105,14 +109,25 @@ function readStorage<T extends string>(
 
 function PathBreadcrumb({
   path,
+  rootPrefix,
+  rootLabel,
   onCwdChange,
 }: {
   path: string;
+  rootPrefix: string;
+  rootLabel: string;
   onCwdChange: (newCwd: string) => void;
 }) {
   const theme = useTheme();
   const isLight = theme.palette.mode === "light";
-  const parts = path ? path.replace(/\/$/, "").split("/").filter(Boolean) : [];
+
+  const relativePath =
+    rootPrefix && path.startsWith(rootPrefix)
+      ? path.slice(rootPrefix.length)
+      : path;
+  const parts = relativePath
+    ? relativePath.replace(/\/$/, "").split("/").filter(Boolean)
+    : [];
 
   return (
     <Breadcrumbs
@@ -128,8 +143,14 @@ function PathBreadcrumb({
     >
       <Button
         size="small"
-        startIcon={<HomeRoundedIcon sx={{ fontSize: 18 }} />}
-        onClick={() => onCwdChange("")}
+        startIcon={
+          rootPrefix ? (
+            <FolderSharedRoundedIcon sx={{ fontSize: 18 }} />
+          ) : (
+            <HomeRoundedIcon sx={{ fontSize: 18 }} />
+          )
+        }
+        onClick={() => onCwdChange(rootPrefix)}
         sx={{
           minWidth: 0,
           px: 1.25,
@@ -150,7 +171,7 @@ function PathBreadcrumb({
           },
         }}
       >
-        全部文件
+        {rootLabel}
       </Button>
 
       {parts.map((part, index) => {
@@ -176,7 +197,9 @@ function PathBreadcrumb({
             key={`${part}-${index}`}
             size="small"
             onClick={() =>
-              onCwdChange(parts.slice(0, index + 1).join("/") + "/")
+              onCwdChange(
+                `${rootPrefix}${parts.slice(0, index + 1).join("/")}/`
+              )
             }
             sx={{
               minWidth: 0,
@@ -202,6 +225,8 @@ interface MainProps {
   refreshToken: number;
   resetRootToken: number;
   authStatus: AuthStatus;
+  activeDirShare: ActiveDirShare | null;
+  onExitDirShare: () => void;
   onRequireLogin: () => void;
   onPrivateDirsChange: (dirs: string[]) => void;
   onRefreshingChange: (loading: boolean) => void;
@@ -214,6 +239,8 @@ function Main({
   refreshToken,
   resetRootToken,
   authStatus,
+  activeDirShare,
+  onExitDirShare,
   onRequireLogin,
   onPrivateDirsChange,
   onRefreshingChange,
@@ -221,9 +248,17 @@ function Main({
 }: MainProps) {
   const theme = useTheme();
   const isLight = theme.palette.mode === "light";
-  const { authenticated, publicRead, privateDirs } = authStatus;
+  const { authenticated, guestFileLocked, privateDirs } = authStatus;
 
-  const [cwd, setCwd] = useState("");
+  const shareRootPrefix = activeDirShare
+    ? `${activeDirShare.rootDir.replace(/^\/+|\/+$/g, "")}/`
+    : "";
+  const shareToken = activeDirShare?.token;
+
+  // Normal unauthenticated guests (NOT via a valid share link) have files locked & images blurred
+  const guestLocked = !authenticated && !activeDirShare && guestFileLocked;
+
+  const [cwd, setCwd] = useState(shareRootPrefix);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [multiSelected, setMultiSelected] = useState<string[] | null>(null);
@@ -265,6 +300,23 @@ function Main({
 
   const transferQueue = useTransferQueue();
   const uploadEnqueue = useUploadEnqueue();
+
+  // Keep cwd aligned when entering/exiting a shared folder
+  useEffect(() => {
+    setCwd(shareRootPrefix);
+    setMultiSelected(null);
+  }, [shareRootPrefix]);
+
+  const handleCwdChange = useCallback(
+    (nextCwd: string) => {
+      if (shareRootPrefix && !nextCwd.startsWith(shareRootPrefix)) {
+        setCwd(shareRootPrefix);
+        return;
+      }
+      setCwd(nextCwd);
+    },
+    [shareRootPrefix]
+  );
 
   const handleViewModeChange = (next: ViewMode) => {
     setViewMode(next);
@@ -313,7 +365,7 @@ function Main({
       const seq = ++fetchSeqRef.current;
       if (showFullLoader) setLoading(true);
       callbacksRef.current.onRefreshingChange(true);
-      fetchPath(cwd)
+      fetchPath(cwd, shareToken)
         .then((fetchedFiles) => {
           if (seq !== fetchSeqRef.current) return;
           setFiles(fetchedFiles);
@@ -336,7 +388,7 @@ function Main({
           callbacksRef.current.onRefreshingChange(false);
         });
     },
-    [cwd]
+    [cwd, shareToken]
   );
 
   useEffect(() => {
@@ -351,10 +403,10 @@ function Main({
 
   useEffect(() => {
     if (resetRootToken > 0) {
-      setCwd("");
+      setCwd(shareRootPrefix);
       setMultiSelected(null);
     }
-  }, [resetRootToken]);
+  }, [resetRootToken, shareRootPrefix]);
 
   useEffect(() => {
     if (!transferQueue.length) return;
@@ -364,7 +416,7 @@ function Main({
     } else if (lastUploadKey) {
       setLastUploadKey(null);
       if (lastFile.status === "completed") {
-        fetchFiles();
+        fetchFiles(false);
         onNotify(`已上传：${lastFile.name}`, "success");
       } else if (lastFile.status === "failed") {
         if (lastFile.error instanceof AuthRequiredError) {
@@ -451,6 +503,20 @@ function Main({
     setShowTextPadDrawer(true);
   }, []);
 
+  const handleLockedFileClick = useCallback(
+    (file: FileItem) => {
+      const filename = extractFilename(file.key);
+      const isImg = isImageFile(file.httpMetadata?.contentType, filename);
+      onNotify(
+        isImg
+          ? "该图片已加密模糊保护，请登录管理员或通过分享链接查看"
+          : "该文件已加密保护无法直接打开，请登录管理员或使用分享链接",
+        "warning"
+      );
+    },
+    [onNotify]
+  );
+
   const handleMultiSelect = useCallback((key: string) => {
     setMultiSelected((prev) => {
       if (prev === null) return [key];
@@ -474,17 +540,17 @@ function Main({
   const handleCopyLink = useCallback(
     async (file: FileItem) => {
       const url = new URL(
-        `/webdav/${encodeKey(file.key)}`,
+        buildWebdavUrl(file.key, { shareToken }),
         window.location.href
       ).toString();
       try {
         await navigator.clipboard.writeText(url);
-        onNotify(`已复制直链：${extractFilename(file.key)}`, "success");
+        onNotify(`已复制链接：${extractFilename(file.key)}`, "success");
       } catch {
         onNotify("复制失败，请手动打开文件地址", "warning");
       }
     },
-    [onNotify]
+    [onNotify, shareToken]
   );
 
   const handleTogglePrivacy = useCallback(
@@ -521,7 +587,7 @@ function Main({
         onNotify(`已创建文件夹「${newFolderName.trim()}」`, "success");
         setFolderDialogOpen(false);
         setNewFolderName("");
-        fetchFiles();
+        fetchFiles(false);
       }
     } catch (err) {
       if (err instanceof AuthRequiredError) {
@@ -556,7 +622,7 @@ function Main({
       await copyPaste(multiSelected[0], cwd + trimmed, true);
       onNotify(`已重命名为「${trimmed}」`, "success");
       setRenameDialogOpen(false);
-      fetchFiles();
+      fetchFiles(false);
     } catch (err) {
       if (err instanceof AuthRequiredError) {
         setRenameDialogOpen(false);
@@ -585,7 +651,7 @@ function Main({
       }
       onNotify(`已删除 ${multiSelected.length} 个项目`, "success");
       setDeleteDialogOpen(false);
-      fetchFiles();
+      fetchFiles(false);
     } catch (err) {
       if (err instanceof AuthRequiredError) {
         setDeleteDialogOpen(false);
@@ -603,6 +669,10 @@ function Main({
     const found = files.find((f) => f.key === multiSelected[0]);
     if (found) setShareFile(found);
   };
+
+  const isLongTermDirShare =
+    activeDirShare &&
+    activeDirShare.expiresAt - Date.now() > 365 * 24 * 60 * 60 * 1000;
 
   return (
     <Box
@@ -638,7 +708,7 @@ function Main({
           return;
         }
         if (!authenticated) {
-          onNotify("访客只读模式下无法上传，请先登录管理员账号", "info");
+          onNotify("访客模式下无法上传，请先登录管理员账号", "info");
           onRequireLogin();
           return;
         }
@@ -713,7 +783,7 @@ function Main({
               sx={{ fontSize: 56, color: "primary.main", mb: 1.5 }}
             />
             <Typography variant="h6" gutterBottom>
-              {authenticated ? "松手即可上传文件" : "请先登录管理员后再上传"}
+              {authenticated ? "松手即可上传文件或文件夹" : "请先登录管理员后再上传"}
             </Typography>
             <Typography variant="body2" color="text.secondary">
               目标目录：{cwd ? `/${cwd}` : "根目录"}
@@ -736,6 +806,35 @@ function Main({
           flexDirection: "column",
         }}
       >
+        {/* Active Folder Share Banner */}
+        {activeDirShare && (
+          <Alert
+            severity="success"
+            icon={<FolderSharedRoundedIcon />}
+            action={
+              <Button color="inherit" size="small" onClick={onExitDirShare}>
+                返回云盘主页
+              </Button>
+            }
+            sx={{
+              mb: 2,
+              borderRadius: "16px",
+              border: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            正在通过加密分享链接访问文件夹「
+            <strong>{extractFilename(activeDirShare.rootDir)}</strong>
+            」· 此目录内文件与高清原图已全部解锁（
+            {isLongTermDirShare
+              ? "长期有效"
+              : `有效期至 ${new Date(
+                  activeDirShare.expiresAt
+                ).toLocaleString()}`}
+            ）
+          </Alert>
+        )}
+
         {/* Workspace Hero & Action Card */}
         <Paper
           elevation={0}
@@ -762,7 +861,16 @@ function Main({
           >
             {/* Left: Breadcrumbs + Stats */}
             <Stack spacing={0.85} sx={{ minWidth: 0 }}>
-              <PathBreadcrumb path={cwd} onCwdChange={setCwd} />
+              <PathBreadcrumb
+                path={cwd}
+                rootPrefix={shareRootPrefix}
+                rootLabel={
+                  activeDirShare
+                    ? extractFilename(activeDirShare.rootDir)
+                    : "全部文件"
+                }
+                onCwdChange={handleCwdChange}
+              />
               <Stack
                 direction="row"
                 alignItems="center"
@@ -777,19 +885,28 @@ function Main({
                     ? ` · 共 ${humanReadableSize(totalSize)}`
                     : ""}
                 </Typography>
-                {!authenticated && (
+                {guestLocked && (
                   <Chip
                     size="small"
-                    label="访客只读模式"
+                    label="访客加密模式（仅文件夹可浏览）"
                     sx={{
                       height: 20,
                       fontSize: "0.69rem",
                       fontWeight: 700,
                       backgroundColor: isLight
-                        ? "rgba(120, 113, 108, 0.1)"
-                        : "rgba(255, 255, 255, 0.08)",
-                      color: "text.secondary",
+                        ? "rgba(217, 119, 6, 0.12)"
+                        : "rgba(251, 191, 36, 0.14)",
+                      color: isLight ? "#B45309" : "#FDE68A",
                     }}
+                  />
+                )}
+                {!authenticated && activeDirShare && (
+                  <Chip
+                    size="small"
+                    color="success"
+                    variant="outlined"
+                    label="分享链接已解锁"
+                    sx={{ height: 20, fontSize: "0.69rem", fontWeight: 700 }}
                   />
                 )}
                 {search.trim() && (
@@ -874,7 +991,9 @@ function Main({
                       : "rgba(251, 191, 36, 0.08)",
                   }}
                 >
-                  管理员登录以解锁上传与编辑
+                  {activeDirShare
+                    ? "管理员登录"
+                    : "管理员登录以解锁文件与原图"}
                 </Button>
               )}
             </Stack>
@@ -897,8 +1016,10 @@ function Main({
               sx={{ display: { xs: "none", sm: "block" } }}
             >
               {authenticated
-                ? "支持拖拽上传 · 点击音视频/图片/PDF 直接预览 · 文件夹可一键设为私密"
-                : "点击图片/音视频/PDF 可直接在线预览 · 登录后解锁上传、编辑与私密目录"}
+                ? "支持拖拽文件/文件夹上传 · 文件夹可一键设为私密或加密分享"
+                : activeDirShare
+                ? "当前目录通过加密分享链接访问，可自由预览高清原图与下载文件"
+                : "访客仅可浏览文件夹目录，所有文件已加密锁定、图片已模糊保护"}
             </Typography>
 
             <Stack
@@ -1031,14 +1152,17 @@ function Main({
             files={filteredFiles}
             viewMode={viewMode}
             authenticated={authenticated}
+            guestLocked={guestLocked}
+            shareToken={shareToken}
             privateDirs={privateDirs}
-            onCwdChange={(newCwd: string) => setCwd(newCwd)}
+            onCwdChange={handleCwdChange}
             multiSelected={multiSelected}
             onMultiSelect={handleMultiSelect}
             onPreviewMedia={setPreviewMedia}
             onEditTextFile={handleEditTextFile}
             onOpenShare={setShareFile}
             onTogglePrivacy={handleTogglePrivacy}
+            onLockedFileClick={handleLockedFileClick}
             emptyMessage={
               <Paper
                 elevation={0}
@@ -1083,8 +1207,8 @@ function Main({
                   {search.trim()
                     ? "试试更换其他关键词，或者清空搜索条件"
                     : authenticated
-                    ? "拖拽文件到这里，或点击下方按钮开始上传"
-                    : "此目录暂时没有可公开查看的文件"}
+                    ? "拖拽文件或文件夹到这里，或点击下方按钮开始上传"
+                    : "此目录暂时没有可查看的项目"}
                 </Typography>
                 {search.trim() ? (
                   <Button variant="outlined" onClick={onClearSearch}>
@@ -1151,10 +1275,11 @@ function Main({
         setOpen={setShowTextPadDrawer}
         cwd={cwd}
         authenticated={authenticated}
+        shareToken={shareToken}
         initialFile={editingTextFile}
         editableFiles={editableTextFiles}
         onSelectFile={setEditingTextFile}
-        onUpload={fetchFiles}
+        onUpload={() => fetchFiles(false)}
         onRequireLogin={onRequireLogin}
         onNotify={onNotify}
       />
@@ -1162,6 +1287,8 @@ function Main({
       <MediaPreviewDialog
         file={previewMedia}
         images={imageFiles}
+        authenticated={authenticated}
+        shareToken={shareToken}
         onClose={() => setPreviewMedia(null)}
         onSelectFile={setPreviewMedia}
         onCopyLink={handleCopyLink}
@@ -1174,7 +1301,6 @@ function Main({
         isPrivate={
           shareFile ? isPathInPrivateDirs(shareFile.key, privateDirs) : false
         }
-        publicRead={publicRead}
         onClose={() => setShareFile(null)}
         onRequireLogin={onRequireLogin}
         onNotify={onNotify}
@@ -1188,7 +1314,7 @@ function Main({
         onClose={() => setMoveCopyState((prev) => ({ ...prev, open: false }))}
         onSuccess={() => {
           setMultiSelected(null);
-          fetchFiles();
+          fetchFiles(false);
         }}
         onNotify={onNotify}
       />
@@ -1200,9 +1326,12 @@ function Main({
         onSelectAll={handleSelectAll}
         onClose={() => setMultiSelected(null)}
         onDownload={() => {
-          if (multiSelected?.length !== 1) return;
+          if (multiSelected?.length !== 1 || guestLocked) return;
           const a = document.createElement("a");
-          a.href = `/webdav/${encodeKey(multiSelected[0])}?download=1`;
+          a.href = buildWebdavUrl(multiSelected[0], {
+            shareToken,
+            download: true,
+          });
           a.download = extractFilename(multiSelected[0]);
           a.click();
         }}

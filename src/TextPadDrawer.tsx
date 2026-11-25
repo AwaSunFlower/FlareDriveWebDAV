@@ -34,13 +34,14 @@ import OpenInFullRoundedIcon from "@mui/icons-material/OpenInFullRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
 import { encodeKey, extractFilename, FileItem } from "./FileGrid";
 import { getMimeTypeForFilename } from "./MimeIcon";
-import { SPA_REQUEST_HEADERS } from "./app/api";
+import { buildWebdavUrl, SPA_REQUEST_HEADERS } from "./app/api";
 
 interface TextPadDrawerProps {
   open: boolean;
   setOpen: (open: boolean) => void;
   cwd: string;
   authenticated: boolean;
+  shareToken?: string;
   initialFile: FileItem | null;
   editableFiles: FileItem[];
   onSelectFile: (file: FileItem | null) => void;
@@ -287,6 +288,7 @@ const TextPadDrawer: React.FC<TextPadDrawerProps> = ({
   setOpen,
   cwd,
   authenticated,
+  shareToken,
   initialFile,
   editableFiles,
   onSelectFile,
@@ -330,7 +332,7 @@ const TextPadDrawer: React.FC<TextPadDrawerProps> = ({
       setLoadingFile(true);
       setLastSavedAt(null);
 
-      fetch(`/webdav/${encodeKey(initialFile.key)}`, {
+      fetch(buildWebdavUrl(initialFile.key, { shareToken }), {
         cache: "no-store",
         headers: SPA_REQUEST_HEADERS,
       })
@@ -379,7 +381,7 @@ const TextPadDrawer: React.FC<TextPadDrawerProps> = ({
     setNoteName(makeTimestampFilename());
     setNoteText("");
     setOriginalText("");
-  }, [draftKey, initialFile, onNotify, open]);
+  }, [draftKey, initialFile, onNotify, open, shareToken]);
 
   // Persist new-note draft automatically so closing never loses work
   useEffect(() => {

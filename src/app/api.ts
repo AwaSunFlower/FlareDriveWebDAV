@@ -7,7 +7,27 @@ export interface AuthStatus {
   username: string | null;
   publicRead: boolean;
   authConfigured: boolean;
+  guestFileLocked: boolean;
   privateDirs: string[];
+}
+
+export interface ShareInfo {
+  valid: boolean;
+  key: string;
+  rootKey: string;
+  name: string;
+  scope: "file" | "dir";
+  isDirectory: boolean;
+  size: number;
+  contentType: string;
+  uploaded: string;
+  expiresAt: number;
+}
+
+export interface ActiveDirShare {
+  token: string;
+  rootDir: string; // normalized without leading/trailing slash
+  expiresAt: number;
 }
 
 export interface StorageStats {
@@ -35,22 +55,60 @@ export class AuthRequiredError extends Error {
   }
 }
 
+export function encodeWebdavKey(key: string): string {
+  return key.split("/").map(encodeURIComponent).join("/");
+}
+
+export function buildWebdavUrl(
+  key: string,
+  options?: { shareToken?: string; download?: boolean }
+): string {
+  const base = `/webdav/${encodeWebdavKey(key)}`;
+  const params = new URLSearchParams();
+  if (options?.shareToken) params.set("share", options.shareToken);
+  if (options?.download) params.set("download", "1");
+  const qs = params.toString();
+  return qs ? `${base}?${qs}` : base;
+}
+
+export function buildThumbnailUrl(
+  thumbnailHash: string,
+  fileKey: string,
+  shareToken?: string
+): string {
+  const base = `/webdav/_$flaredrive$/thumbnails/${thumbnailHash}.png`;
+  if (!shareToken) return base;
+  const params = new URLSearchParams({
+    share: shareToken,
+    for: fileKey,
+  });
+  return `${base}?${params.toString()}`;
+}
+
 export async function fetchAuthStatus(): Promise<AuthStatus> {
   const res = await fetch("/api/auth/status", {
     headers: SPA_REQUEST_HEADERS,
     cache: "no-store",
   });
   if (!res.ok) {
-    // Graceful fallback if API route is unavailable
     return {
       authenticated: false,
       username: null,
       publicRead: true,
       authConfigured: true,
+      guestFileLocked: true,
       privateDirs: [],
     };
   }
-  return (await res.json()) as AuthStatus;
+  const data = (await res.json()) as Partial<AuthStatus>;
+  return {
+    authenticated: Boolean(data.authenticated),
+    username: data.username ?? null,
+    publicRead: data.publicRead !== false,
+    authConfigured: data.authConfigured !== false,
+    guestFileLocked: data.guestFileLocked !== false,
+    privateDirs: Array.isArray(data.privateDirs) ? data.privateDirs : [],
+  };
 }
 
 export async function loginAdmin(
@@ -103,7 +161,14 @@ export async function createSignedShare(
   key: string,
   expiresInSeconds: number,
   download: boolean
-): Promise<{ url: string; expiresAt: number; key: string }> {
+): Promise<{
+  url: string;
+  pageUrl: string;
+  directUrl: string | null;
+  scope: "file" | "dir";
+  expiresAt: number;
+  key: string;
+}> {
   const res = await fetch("/api/share", {
     method: "POST",
     headers: {
@@ -116,18 +181,43 @@ export async function createSignedShare(
   if (res.status === 401) throw new AuthRequiredError();
   const data = (await res.json().catch(() => ({}))) as {
     url?: string;
+    pageUrl?: string;
+    directUrl?: string | null;
+    scope?: "file" | "dir";
     expiresAt?: number;
     key?: string;
     error?: string;
   };
-  if (!res.ok || !data.url) {
+  if (!res.ok || (!data.pageUrl && !data.url)) {
     throw new Error(data.error || `生成分享链接失败 (${res.status})`);
   }
   return {
-    url: data.url,
+    url: data.url || data.pageUrl!,
+    pageUrl: data.pageUrl || data.url!,
+    directUrl: data.directUrl ?? null,
+    scope: data.scope === "dir" ? "dir" : "file",
     expiresAt: data.expiresAt || Date.now() + expiresInSeconds * 1000,
     key: data.key || key,
   };
+}
+
+export async function fetchShareInfo(
+  shareToken: string,
+  key?: string
+): Promise<ShareInfo> {
+  const params = new URLSearchParams({ share: shareToken });
+  if (key) params.set("key", key);
+  const res = await fetch(`/api/share-info?${params.toString()}`, {
+    headers: SPA_REQUEST_HEADERS,
+    cache: "no-store",
+  });
+  const data = (await res.json().catch(() => ({}))) as Partial<ShareInfo> & {
+    error?: string;
+  };
+  if (!res.ok || !data.valid) {
+    throw new Error(data.error || "该分享链接无效或已过期");
+  }
+  return data as ShareInfo;
 }
 
 export async function setFolderPrivacy(

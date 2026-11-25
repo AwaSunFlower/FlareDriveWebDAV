@@ -7,6 +7,7 @@ import {
   jsonResponse,
   normalizeDrivePath,
   resolveBucket,
+  ShareScope,
 } from "../../utils/auth";
 
 function encodeKeyPath(key: string): string {
@@ -36,31 +37,43 @@ export const onRequestPost: PagesFunction<DriveEnv> = async ({
 
   const key = normalizeDrivePath(typeof body.key === "string" ? body.key : "");
   if (!key || key.startsWith(INTERNAL_PREFIX) || hasPathTraversal(key)) {
-    return jsonResponse({ error: "无效的文件路径" }, 400);
+    return jsonResponse({ error: "无效的文件或目录路径" }, 400);
   }
 
   const head = await bucket.head(key);
   if (!head) {
-    return jsonResponse({ error: "文件不存在" }, 404);
+    return jsonResponse({ error: "文件或文件夹不存在" }, 404);
   }
-  if (head.httpMetadata?.contentType === "application/x-directory") {
-    return jsonResponse({ error: "暂不支持对文件夹生成直链，请选择具体文件" }, 400);
-  }
+
+  const isDir = head.httpMetadata?.contentType === "application/x-directory";
+  const scope: ShareScope = isDir ? "dir" : "file";
 
   const ttl =
     typeof body.expiresInSeconds === "number" && Number.isFinite(body.expiresInSeconds)
       ? body.expiresInSeconds
       : 24 * 60 * 60;
 
-  const { token, expiresAt } = await createShareToken(env, key, ttl);
-  const shareUrl = new URL(`/webdav/${encodeKeyPath(key)}`, request.url);
-  shareUrl.searchParams.set("share", token);
-  if (body.download) {
-    shareUrl.searchParams.set("download", "1");
+  const { token, expiresAt } = await createShareToken(env, key, ttl, scope);
+
+  const pageUrl = new URL("/", request.url);
+  pageUrl.searchParams.set("share", token);
+  pageUrl.searchParams.set(isDir ? "dir" : "file", key);
+
+  let directUrl: string | null = null;
+  if (!isDir) {
+    const rawUrl = new URL(`/webdav/${encodeKeyPath(key)}`, request.url);
+    rawUrl.searchParams.set("share", token);
+    if (body.download) {
+      rawUrl.searchParams.set("download", "1");
+    }
+    directUrl = rawUrl.toString();
   }
 
   return jsonResponse({
-    url: shareUrl.toString(),
+    url: directUrl ?? pageUrl.toString(),
+    pageUrl: pageUrl.toString(),
+    directUrl,
+    scope,
     expiresAt,
     key,
   });

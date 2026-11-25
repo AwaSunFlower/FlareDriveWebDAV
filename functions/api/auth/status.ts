@@ -3,6 +3,7 @@ import {
   DriveEnv,
   getEffectivePrivateDirs,
   isAuthConfigured,
+  isGuestFileLockEnabled,
   isPublicReadEnabled,
   jsonResponse,
   resolveBucket,
@@ -15,6 +16,7 @@ export const onRequestGet: PagesFunction<DriveEnv> = async ({
   const auth = await authenticateRequest(request, env);
   const publicRead = isPublicReadEnabled(env);
   const authConfigured = isAuthConfigured(env);
+  const guestFileLocked = isGuestFileLockEnabled(env);
 
   let privateDirs: string[] = [];
   if (auth.authenticated) {
@@ -29,6 +31,7 @@ export const onRequestGet: PagesFunction<DriveEnv> = async ({
     username: auth.username,
     publicRead,
     authConfigured,
+    guestFileLocked,
     privateDirs,
   });
 };

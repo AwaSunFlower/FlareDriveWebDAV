@@ -10,6 +10,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import BlurOnRoundedIcon from "@mui/icons-material/BlurOnRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import EditNoteRoundedIcon from "@mui/icons-material/EditNoteRounded";
@@ -20,8 +21,10 @@ import ShareRoundedIcon from "@mui/icons-material/ShareRounded";
 import MimeIcon, {
   getFileBadgeLabel,
   isEditableTextFile,
+  isImageFile,
   isPreviewableMedia,
 } from "./MimeIcon";
+import { buildThumbnailUrl, buildWebdavUrl } from "./app/api";
 import { humanReadableSize } from "./app/utils";
 
 export type ViewMode = "grid" | "list";
@@ -66,10 +69,140 @@ function formatDateTime(value?: string) {
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
 
+const BLUR_PALETTES = [
+  "radial-gradient(circle at 22% 30%, #FDE68A 0%, transparent 55%), radial-gradient(circle at 78% 72%, #6EE7B7 0%, transparent 55%), linear-gradient(135deg, #FEF3C7 0%, #D1FAE5 55%, #FDE68A 100%)",
+  "radial-gradient(circle at 28% 70%, #FDBA74 0%, transparent 52%), radial-gradient(circle at 76% 24%, #93C5FD 0%, transparent 52%), linear-gradient(135deg, #FFEDD5 0%, #DBEAFE 55%, #FEF08A 100%)",
+  "radial-gradient(circle at 30% 25%, #C4B5FD 0%, transparent 55%), radial-gradient(circle at 72% 76%, #FCD34D 0%, transparent 55%), linear-gradient(135deg, #EDE9FE 0%, #FEF3C7 55%, #FCE7F3 100%)",
+  "radial-gradient(circle at 24% 65%, #86EFAC 0%, transparent 54%), radial-gradient(circle at 78% 30%, #FCA5A5 0%, transparent 54%), linear-gradient(135deg, #DCFCE7 0%, #FEE2E2 55%, #FEF3C7 100%)",
+];
+
+function pickBlurPalette(seed: string): string {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  return BLUR_PALETTES[hash % BLUR_PALETTES.length];
+}
+
+function BlurredImageBanner({
+  seed,
+  compact = false,
+}: {
+  seed: string;
+  compact?: boolean;
+}) {
+  const palette = pickBlurPalette(seed);
+
+  if (compact) {
+    return (
+      <Box
+        sx={{
+          position: "relative",
+          width: 38,
+          height: 38,
+          borderRadius: "10px",
+          overflow: "hidden",
+          flexShrink: 0,
+          border: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Box
+          sx={{
+            position: "absolute",
+            inset: -6,
+            background: palette,
+            filter: "blur(7px)",
+            transform: "scale(1.2)",
+          }}
+        />
+        <Box
+          sx={{
+            position: "relative",
+            width: "100%",
+            height: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "rgba(28, 25, 23, 0.28)",
+            color: "#FFFFFF",
+          }}
+        >
+          <LockRoundedIcon sx={{ fontSize: 16 }} />
+        </Box>
+      </Box>
+    );
+  }
+
+  return (
+    <Box
+      data-testid="blurred-image-mask"
+      sx={{
+        position: "relative",
+        width: "100%",
+        height: 82,
+        borderRadius: "13px",
+        overflow: "hidden",
+        border: "1px solid",
+        borderColor: "divider",
+      }}
+    >
+      {/* Abstract blurred bokeh background (zero raw image pixels leaked) */}
+      <Box
+        sx={{
+          position: "absolute",
+          inset: -14,
+          background: palette,
+          filter: "blur(14px)",
+          transform: "scale(1.25)",
+        }}
+      />
+      <Box
+        sx={{
+          position: "relative",
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 0.5,
+          backgroundColor: "rgba(24, 21, 18, 0.26)",
+          backdropFilter: "blur(6px)",
+        }}
+      >
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.6}
+          sx={{
+            px: 1.25,
+            py: 0.4,
+            borderRadius: "999px",
+            backgroundColor: "rgba(24, 21, 18, 0.56)",
+            color: "#FEF3C7",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          <BlurOnRoundedIcon sx={{ fontSize: 15 }} />
+          <Typography
+            variant="caption"
+            sx={{ fontWeight: 700, fontSize: "0.7rem", color: "#FEF3C7" }}
+          >
+            图片已模糊加密
+          </Typography>
+        </Stack>
+      </Box>
+    </Box>
+  );
+}
+
 interface FileGridProps {
   files: FileItem[];
   viewMode: ViewMode;
   authenticated: boolean;
+  guestLocked: boolean;
+  shareToken?: string;
   privateDirs: string[];
   onCwdChange: (newCwd: string) => void;
   multiSelected: string[] | null;
@@ -78,6 +211,7 @@ interface FileGridProps {
   onEditTextFile: (file: FileItem) => void;
   onOpenShare: (file: FileItem) => void;
   onTogglePrivacy: (folderPath: string, nextPrivate: boolean) => void;
+  onLockedFileClick: (file: FileItem) => void;
   emptyMessage?: React.ReactNode;
 }
 
@@ -85,6 +219,8 @@ function FileGrid({
   files,
   viewMode,
   authenticated,
+  guestLocked,
+  shareToken,
   privateDirs,
   onCwdChange,
   multiSelected,
@@ -93,6 +229,7 @@ function FileGrid({
   onEditTextFile,
   onOpenShare,
   onTogglePrivacy,
+  onLockedFileClick,
   emptyMessage,
 }: FileGridProps) {
   const theme = useTheme();
@@ -104,29 +241,50 @@ function FileGrid({
 
   const handleOpenItem = (file: FileItem) => {
     const filename = extractFilename(file.key);
+    const dir = isDirectory(file);
+
+    if (!dir && guestLocked) {
+      onLockedFileClick(file);
+      return;
+    }
+
     if (multiSelected !== null) {
       onMultiSelect(file.key);
-    } else if (isDirectory(file)) {
+    } else if (dir) {
       onCwdChange(file.key.replace(/\/$/, "") + "/");
     } else if (isPreviewableMedia(file.httpMetadata?.contentType, filename)) {
       onPreviewMedia(file);
     } else {
       window.open(
-        `/webdav/${encodeKey(file.key)}`,
+        buildWebdavUrl(file.key, { shareToken }),
         "_blank",
         "noopener,noreferrer"
       );
     }
   };
 
-  const renderIcon = (file: FileItem, size: "small" | "medium") => {
+  const renderIcon = (
+    file: FileItem,
+    size: "small" | "medium",
+    lockedFile: boolean
+  ) => {
     const filename = extractFilename(file.key);
     const boxSize = size === "small" ? 38 : 46;
-    if (file.customMetadata?.thumbnail) {
-      return (
+    const isImg = isImageFile(file.httpMetadata?.contentType, filename);
+
+    if (lockedFile && isImg) {
+      return <BlurredImageBanner seed={file.key} compact />;
+    }
+
+    const baseIcon =
+      !lockedFile && file.customMetadata?.thumbnail ? (
         <Box
           component="img"
-          src={`/webdav/_$flaredrive$/thumbnails/${file.customMetadata.thumbnail}.png`}
+          src={buildThumbnailUrl(
+            file.customMetadata.thumbnail,
+            file.key,
+            shareToken
+          )}
           alt={filename}
           sx={{
             width: boxSize,
@@ -138,14 +296,39 @@ function FileGrid({
             borderColor: "divider",
           }}
         />
+      ) : (
+        <MimeIcon
+          contentType={file.httpMetadata?.contentType ?? ""}
+          filename={filename}
+          size={size}
+        />
       );
-    }
+
+    if (!lockedFile) return baseIcon;
+
     return (
-      <MimeIcon
-        contentType={file.httpMetadata?.contentType ?? ""}
-        filename={filename}
-        size={size}
-      />
+      <Box sx={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
+        <Box sx={{ opacity: 0.7 }}>{baseIcon}</Box>
+        <Box
+          sx={{
+            position: "absolute",
+            right: -4,
+            bottom: -4,
+            width: 20,
+            height: 20,
+            borderRadius: "50%",
+            backgroundColor: isLight ? "#292018" : "#F59E0B",
+            color: isLight ? "#FEF3C7" : "#1C1917",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            border: "2px solid",
+            borderColor: "background.paper",
+          }}
+        >
+          <LockRoundedIcon sx={{ fontSize: 11 }} />
+        </Box>
+      </Box>
     );
   };
 
@@ -169,7 +352,7 @@ function FileGrid({
         <Box
           sx={{
             display: { xs: "none", sm: "grid" },
-            gridTemplateColumns: "minmax(0, 1fr) 92px 150px 92px 128px",
+            gridTemplateColumns: "minmax(0, 1fr) 92px 150px 92px 136px",
             alignItems: "center",
             gap: 2,
             px: 2.5,
@@ -212,10 +395,13 @@ function FileGrid({
         {files.map((file, idx) => {
           const filename = extractFilename(file.key);
           const dir = isDirectory(file);
+          const lockedFile = !dir && guestLocked;
+          const isImg = !dir && isImageFile(file.httpMetadata?.contentType, filename);
           const cleanKey = file.key.replace(/^\/+/, "").replace(/\/+$/, "");
           const isExactPrivateDir = dir && privateDirs.includes(cleanKey);
           const editableText =
             !dir &&
+            !lockedFile &&
             isEditableTextFile(file.httpMetadata?.contentType, filename);
           const selected = Boolean(multiSelected?.includes(file.key));
           const badgeLabel = getFileBadgeLabel(
@@ -229,19 +415,19 @@ function FileGrid({
               onClick={() => handleOpenItem(file)}
               onContextMenu={(e) => {
                 e.preventDefault();
-                onMultiSelect(file.key);
+                if (!lockedFile) onMultiSelect(file.key);
               }}
               sx={{
                 display: "grid",
                 gridTemplateColumns: {
                   xs: "minmax(0, 1fr) auto",
-                  sm: "minmax(0, 1fr) 92px 150px 92px 128px",
+                  sm: "minmax(0, 1fr) 92px 150px 92px 136px",
                 },
                 alignItems: "center",
                 gap: { xs: 1.25, sm: 2 },
                 px: { xs: 1.75, sm: 2.5 },
                 py: 1.35,
-                cursor: "pointer",
+                cursor: lockedFile ? "not-allowed" : "pointer",
                 userSelect: "none",
                 borderBottom: idx === files.length - 1 ? "none" : "1px solid",
                 borderColor: "divider",
@@ -269,14 +455,17 @@ function FileGrid({
                 spacing={1.5}
                 sx={{ minWidth: 0 }}
               >
-                {renderIcon(file, "small")}
+                {renderIcon(file, "small", lockedFile)}
                 <Box sx={{ minWidth: 0 }}>
                   <Stack direction="row" alignItems="center" spacing={0.75}>
                     <Tooltip title={filename} enterDelay={500}>
                       <Typography
                         variant="body2"
                         noWrap
-                        sx={{ fontWeight: 600, color: "text.primary" }}
+                        sx={{
+                          fontWeight: 600,
+                          color: lockedFile ? "text.secondary" : "text.primary",
+                        }}
                       >
                         {filename}
                       </Typography>
@@ -296,6 +485,33 @@ function FileGrid({
                           height: 19,
                           fontSize: "0.66rem",
                           fontWeight: 700,
+                          "& .MuiChip-label": { px: 0.7 },
+                        }}
+                      />
+                    )}
+                    {lockedFile && (
+                      <Chip
+                        icon={
+                          isImg ? (
+                            <BlurOnRoundedIcon
+                              sx={{ fontSize: "12px !important" }}
+                            />
+                          ) : (
+                            <LockRoundedIcon
+                              sx={{ fontSize: "11px !important" }}
+                            />
+                          )
+                        }
+                        label={isImg ? "模糊加密" : "已加密"}
+                        size="small"
+                        sx={{
+                          height: 19,
+                          fontSize: "0.65rem",
+                          fontWeight: 700,
+                          backgroundColor: isLight
+                            ? "rgba(120, 113, 108, 0.12)"
+                            : "rgba(255, 255, 255, 0.08)",
+                          color: "text.secondary",
                           "& .MuiChip-label": { px: 0.7 },
                         }}
                       />
@@ -363,110 +579,149 @@ function FileGrid({
                 alignItems="center"
                 spacing={0.25}
               >
-                {dir && authenticated && (
-                  <Tooltip
-                    title={
-                      isExactPrivateDir
-                        ? "取消私密（对访客恢复可见）"
-                        : "设为私密目录（对未登录访客隐藏）"
-                    }
-                  >
-                    <IconButton
-                      size="small"
-                      aria-label={isExactPrivateDir ? "取消私密" : "设为私密"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onTogglePrivacy(cleanKey, !isExactPrivateDir);
-                      }}
-                      sx={{
-                        color: isExactPrivateDir
-                          ? "primary.main"
-                          : "text.secondary",
-                      }}
-                    >
-                      {isExactPrivateDir ? (
-                        <LockRoundedIcon sx={{ fontSize: 17 }} />
-                      ) : (
-                        <LockOpenRoundedIcon sx={{ fontSize: 17 }} />
-                      )}
-                    </IconButton>
+                {lockedFile ? (
+                  <Tooltip title="文件已加密，请登录管理员或使用分享链接">
+                    <LockRoundedIcon
+                      sx={{ fontSize: 17, color: "text.disabled", mr: 0.75 }}
+                    />
                   </Tooltip>
-                )}
-                {editableText && (
-                  <Tooltip
-                    title={authenticated ? "在 TextPad 中编辑" : "在 TextPad 中查看"}
-                  >
-                    <IconButton
-                      size="small"
-                      aria-label="在线编辑"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onEditTextFile(file);
-                      }}
-                      sx={{
-                        color: "text.secondary",
-                        "&:hover": { color: "primary.main" },
-                      }}
-                    >
-                      <EditNoteRoundedIcon sx={{ fontSize: 19 }} />
-                    </IconButton>
-                  </Tooltip>
-                )}
-                {!dir && (
+                ) : (
                   <>
-                    <Tooltip title="分享 / 限时直链">
-                      <IconButton
-                        size="small"
-                        aria-label="分享文件"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenShare(file);
-                        }}
-                        sx={{
-                          color: "text.secondary",
-                          "&:hover": { color: "primary.main" },
-                        }}
+                    {dir && authenticated && (
+                      <>
+                        <Tooltip title="加密分享文件夹">
+                          <IconButton
+                            size="small"
+                            aria-label="分享文件夹"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenShare(file);
+                            }}
+                            sx={{
+                              color: "text.secondary",
+                              "&:hover": { color: "primary.main" },
+                            }}
+                          >
+                            <ShareRoundedIcon sx={{ fontSize: 17 }} />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip
+                          title={
+                            isExactPrivateDir
+                              ? "取消私密（对访客恢复可见）"
+                              : "设为私密目录（对未登录访客隐藏）"
+                          }
+                        >
+                          <IconButton
+                            size="small"
+                            aria-label={isExactPrivateDir ? "取消私密" : "设为私密"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onTogglePrivacy(cleanKey, !isExactPrivateDir);
+                            }}
+                            sx={{
+                              color: isExactPrivateDir
+                                ? "primary.main"
+                                : "text.secondary",
+                            }}
+                          >
+                            {isExactPrivateDir ? (
+                              <LockRoundedIcon sx={{ fontSize: 17 }} />
+                            ) : (
+                              <LockOpenRoundedIcon sx={{ fontSize: 17 }} />
+                            )}
+                          </IconButton>
+                        </Tooltip>
+                      </>
+                    )}
+                    {editableText && (
+                      <Tooltip
+                        title={
+                          authenticated ? "在 TextPad 中编辑" : "在 TextPad 中查看"
+                        }
                       >
-                        <ShareRoundedIcon sx={{ fontSize: 17 }} />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="下载">
-                      <IconButton
-                        size="small"
-                        aria-label="下载"
-                        component="a"
-                        href={`/webdav/${encodeKey(file.key)}?download=1`}
-                        download={filename}
-                        onClick={(e) => e.stopPropagation()}
-                        sx={{
-                          display: { xs: "none", sm: "inline-flex" },
-                          color: "text.secondary",
-                        }}
-                      >
-                        <DownloadRoundedIcon sx={{ fontSize: 17 }} />
-                      </IconButton>
-                    </Tooltip>
+                        <IconButton
+                          size="small"
+                          aria-label="在线编辑"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onEditTextFile(file);
+                          }}
+                          sx={{
+                            color: "text.secondary",
+                            "&:hover": { color: "primary.main" },
+                          }}
+                        >
+                          <EditNoteRoundedIcon sx={{ fontSize: 19 }} />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {!dir && (
+                      <>
+                        {authenticated && (
+                          <Tooltip title="分享 / 加密链接">
+                            <IconButton
+                              size="small"
+                              aria-label="分享文件"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenShare(file);
+                              }}
+                              sx={{
+                                color: "text.secondary",
+                                "&:hover": { color: "primary.main" },
+                              }}
+                            >
+                              <ShareRoundedIcon sx={{ fontSize: 17 }} />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                        <Tooltip title="下载">
+                          <IconButton
+                            size="small"
+                            aria-label="下载"
+                            component="a"
+                            href={buildWebdavUrl(file.key, {
+                              shareToken,
+                              download: true,
+                            })}
+                            download={filename}
+                            onClick={(e) => e.stopPropagation()}
+                            sx={{
+                              display: { xs: "none", sm: "inline-flex" },
+                              color: "text.secondary",
+                            }}
+                          >
+                            <DownloadRoundedIcon sx={{ fontSize: 17 }} />
+                          </IconButton>
+                        </Tooltip>
+                      </>
+                    )}
+                    {(authenticated || Boolean(shareToken)) && (
+                      <Tooltip title={selected ? "取消选择" : "选择"}>
+                        <IconButton
+                          size="small"
+                          aria-label={selected ? "取消选择" : "选择"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onMultiSelect(file.key);
+                          }}
+                          sx={{
+                            color: selected ? "primary.main" : "text.secondary",
+                          }}
+                        >
+                          {selected ? (
+                            <CheckCircleRoundedIcon sx={{ fontSize: 18 }} />
+                          ) : (
+                            <RadioButtonUncheckedRoundedIcon
+                              sx={{ fontSize: 18 }}
+                            />
+                          )}
+                        </IconButton>
+                      </Tooltip>
+                    )}
                   </>
                 )}
-                <Tooltip title={selected ? "取消选择" : "选择"}>
-                  <IconButton
-                    size="small"
-                    aria-label={selected ? "取消选择" : "选择"}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onMultiSelect(file.key);
-                    }}
-                    sx={{
-                      color: selected ? "primary.main" : "text.secondary",
-                    }}
-                  >
-                    {selected ? (
-                      <CheckCircleRoundedIcon sx={{ fontSize: 18 }} />
-                    ) : (
-                      <RadioButtonUncheckedRoundedIcon sx={{ fontSize: 18 }} />
-                    )}
-                  </IconButton>
-                </Tooltip>
               </Stack>
             </Box>
           );
@@ -481,10 +736,15 @@ function FileGrid({
       {files.map((file) => {
         const filename = extractFilename(file.key);
         const dir = isDirectory(file);
+        const lockedFile = !dir && guestLocked;
+        const isImg =
+          !dir && isImageFile(file.httpMetadata?.contentType, filename);
         const cleanKey = file.key.replace(/^\/+/, "").replace(/\/+$/, "");
         const isExactPrivateDir = dir && privateDirs.includes(cleanKey);
         const editableText =
-          !dir && isEditableTextFile(file.httpMetadata?.contentType, filename);
+          !dir &&
+          !lockedFile &&
+          isEditableTextFile(file.httpMetadata?.contentType, filename);
         const selected = Boolean(multiSelected?.includes(file.key));
         const badgeLabel = getFileBadgeLabel(
           file.httpMetadata?.contentType,
@@ -498,7 +758,7 @@ function FileGrid({
               onClick={() => handleOpenItem(file)}
               onContextMenu={(e) => {
                 e.preventDefault();
-                onMultiSelect(file.key);
+                if (!lockedFile) onMultiSelect(file.key);
               }}
               sx={{
                 position: "relative",
@@ -507,14 +767,18 @@ function FileGrid({
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "space-between",
-                gap: 1.75,
+                gap: 1.5,
                 borderRadius: "18px",
-                cursor: "pointer",
+                cursor: lockedFile ? "not-allowed" : "pointer",
                 userSelect: "none",
                 backgroundColor: selected
                   ? isLight
                     ? "#FFFBEB"
                     : "rgba(251, 191, 36, 0.11)"
+                  : lockedFile
+                  ? isLight
+                    ? "rgba(255, 255, 255, 0.78)"
+                    : "rgba(30, 27, 24, 0.78)"
                   : "background.paper",
                 border: selected ? "1.5px solid" : "1px solid",
                 borderColor: selected
@@ -531,155 +795,218 @@ function FileGrid({
                   : "0 2px 12px rgba(0, 0, 0, 0.25)",
                 transition:
                   "transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease",
-                "&:hover": {
-                  transform: "translateY(-3px)",
-                  borderColor: isLight
-                    ? "rgba(217, 119, 6, 0.42)"
-                    : "rgba(251, 191, 36, 0.4)",
-                  boxShadow: isLight
-                    ? "0 14px 28px -10px rgba(180, 83, 9, 0.18)"
-                    : "0 14px 30px -8px rgba(0, 0, 0, 0.48)",
-                  "& .sf-card-actions": {
-                    opacity: 1,
-                  },
-                },
+                "&:hover": lockedFile
+                  ? {
+                      borderColor: isLight
+                        ? "rgba(180, 83, 9, 0.25)"
+                        : "rgba(251, 191, 36, 0.24)",
+                    }
+                  : {
+                      transform: "translateY(-3px)",
+                      borderColor: isLight
+                        ? "rgba(217, 119, 6, 0.42)"
+                        : "rgba(251, 191, 36, 0.4)",
+                      boxShadow: isLight
+                        ? "0 14px 28px -10px rgba(180, 83, 9, 0.18)"
+                        : "0 14px 30px -8px rgba(0, 0, 0, 0.48)",
+                      "& .sf-card-actions": {
+                        opacity: 1,
+                      },
+                    },
               }}
             >
-              {/* Top Row: Icon + Hover Actions */}
-              <Stack
-                direction="row"
-                alignItems="flex-start"
-                justifyContent="space-between"
-                spacing={1}
-              >
-                <Stack direction="row" alignItems="center" spacing={1}>
-                  {renderIcon(file, "medium")}
-                  {isExactPrivateDir && (
-                    <Chip
-                      icon={
-                        <LockRoundedIcon sx={{ fontSize: "13px !important" }} />
-                      }
-                      label="私密"
-                      size="small"
-                      color="primary"
-                      variant="outlined"
-                      sx={{
-                        height: 22,
-                        fontSize: "0.7rem",
-                        fontWeight: 700,
-                      }}
-                    />
-                  )}
-                </Stack>
-
+              {/* Top Visual Row: Blurred Image Banner for locked images OR Icon + Actions */}
+              {lockedFile && isImg ? (
+                <BlurredImageBanner seed={file.key} />
+              ) : (
                 <Stack
                   direction="row"
-                  spacing={0.25}
-                  className="sf-card-actions"
-                  sx={{
-                    opacity:
-                      selected || multiSelected !== null
-                        ? 1
-                        : { xs: 0.78, sm: 0 },
-                    transition: "opacity 0.18s ease",
-                  }}
+                  alignItems="flex-start"
+                  justifyContent="space-between"
+                  spacing={1}
                 >
-                  {dir && authenticated && (
-                    <Tooltip
-                      title={
-                        isExactPrivateDir
-                          ? "取消私密"
-                          : "设为私密（对访客隐藏）"
-                      }
-                    >
-                      <IconButton
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    {renderIcon(file, "medium", lockedFile)}
+                    {isExactPrivateDir && (
+                      <Chip
+                        icon={
+                          <LockRoundedIcon
+                            sx={{ fontSize: "13px !important" }}
+                          />
+                        }
+                        label="私密"
                         size="small"
-                        aria-label={isExactPrivateDir ? "取消私密" : "设为私密"}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onTogglePrivacy(cleanKey, !isExactPrivateDir);
-                        }}
+                        color="primary"
+                        variant="outlined"
                         sx={{
-                          p: 0.5,
-                          color: isExactPrivateDir
-                            ? "primary.main"
-                            : "text.secondary",
-                          "&:hover": { color: "primary.main" },
+                          height: 22,
+                          fontSize: "0.7rem",
+                          fontWeight: 700,
                         }}
-                      >
-                        {isExactPrivateDir ? (
-                          <LockRoundedIcon sx={{ fontSize: 17 }} />
-                        ) : (
-                          <LockOpenRoundedIcon sx={{ fontSize: 17 }} />
-                        )}
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                  {editableText && (
-                    <Tooltip
-                      title={
-                        authenticated ? "在 TextPad 中编辑" : "在 TextPad 中查看"
-                      }
-                    >
-                      <IconButton
+                      />
+                    )}
+                    {lockedFile && (
+                      <Chip
+                        icon={
+                          <LockRoundedIcon
+                            sx={{ fontSize: "12px !important" }}
+                          />
+                        }
+                        label="已加密"
                         size="small"
-                        aria-label="在线编辑"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onEditTextFile(file);
-                        }}
                         sx={{
-                          p: 0.5,
+                          height: 22,
+                          fontSize: "0.69rem",
+                          fontWeight: 700,
+                          backgroundColor: isLight
+                            ? "rgba(120, 113, 108, 0.12)"
+                            : "rgba(255, 255, 255, 0.08)",
                           color: "text.secondary",
-                          "&:hover": { color: "primary.main" },
                         }}
-                      >
-                        <EditNoteRoundedIcon sx={{ fontSize: 19 }} />
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                  {!dir && (
-                    <Tooltip title="分享 / 限时直链">
-                      <IconButton
-                        size="small"
-                        aria-label="分享文件"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenShare(file);
-                        }}
-                        sx={{
-                          p: 0.5,
-                          color: "text.secondary",
-                          "&:hover": { color: "primary.main" },
-                        }}
-                      >
-                        <ShareRoundedIcon sx={{ fontSize: 17 }} />
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                  <Tooltip title={selected ? "取消选择" : "选择"}>
-                    <IconButton
-                      size="small"
-                      aria-label={selected ? "取消选择" : "选择"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onMultiSelect(file.key);
-                      }}
+                      />
+                    )}
+                  </Stack>
+
+                  {!lockedFile && (
+                    <Stack
+                      direction="row"
+                      spacing={0.25}
+                      className="sf-card-actions"
                       sx={{
-                        p: 0.5,
-                        color: selected ? "primary.main" : "text.secondary",
-                        "&:hover": { color: "primary.main" },
+                        opacity:
+                          selected || multiSelected !== null
+                            ? 1
+                            : { xs: 0.78, sm: 0 },
+                        transition: "opacity 0.18s ease",
                       }}
                     >
-                      {selected ? (
-                        <CheckCircleRoundedIcon sx={{ fontSize: 19 }} />
-                      ) : (
-                        <RadioButtonUncheckedRoundedIcon sx={{ fontSize: 19 }} />
+                      {dir && authenticated && (
+                        <>
+                          <Tooltip title="加密分享文件夹">
+                            <IconButton
+                              size="small"
+                              aria-label="分享文件夹"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenShare(file);
+                              }}
+                              sx={{
+                                p: 0.5,
+                                color: "text.secondary",
+                                "&:hover": { color: "primary.main" },
+                              }}
+                            >
+                              <ShareRoundedIcon sx={{ fontSize: 17 }} />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip
+                            title={
+                              isExactPrivateDir
+                                ? "取消私密"
+                                : "设为私密（对访客隐藏）"
+                            }
+                          >
+                            <IconButton
+                              size="small"
+                              aria-label={
+                                isExactPrivateDir ? "取消私密" : "设为私密"
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onTogglePrivacy(cleanKey, !isExactPrivateDir);
+                              }}
+                              sx={{
+                                p: 0.5,
+                                color: isExactPrivateDir
+                                  ? "primary.main"
+                                  : "text.secondary",
+                                "&:hover": { color: "primary.main" },
+                              }}
+                            >
+                              {isExactPrivateDir ? (
+                                <LockRoundedIcon sx={{ fontSize: 17 }} />
+                              ) : (
+                                <LockOpenRoundedIcon sx={{ fontSize: 17 }} />
+                              )}
+                            </IconButton>
+                          </Tooltip>
+                        </>
                       )}
-                    </IconButton>
-                  </Tooltip>
+                      {editableText && (
+                        <Tooltip
+                          title={
+                            authenticated
+                              ? "在 TextPad 中编辑"
+                              : "在 TextPad 中查看"
+                          }
+                        >
+                          <IconButton
+                            size="small"
+                            aria-label="在线编辑"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onEditTextFile(file);
+                            }}
+                            sx={{
+                              p: 0.5,
+                              color: "text.secondary",
+                              "&:hover": { color: "primary.main" },
+                            }}
+                          >
+                            <EditNoteRoundedIcon sx={{ fontSize: 19 }} />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      {!dir && authenticated && (
+                        <Tooltip title="分享 / 加密链接">
+                          <IconButton
+                            size="small"
+                            aria-label="分享文件"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenShare(file);
+                            }}
+                            sx={{
+                              p: 0.5,
+                              color: "text.secondary",
+                              "&:hover": { color: "primary.main" },
+                            }}
+                          >
+                            <ShareRoundedIcon sx={{ fontSize: 17 }} />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      {(authenticated || Boolean(shareToken)) && (
+                        <Tooltip title={selected ? "取消选择" : "选择"}>
+                          <IconButton
+                            size="small"
+                            aria-label={selected ? "取消选择" : "选择"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onMultiSelect(file.key);
+                            }}
+                            sx={{
+                              p: 0.5,
+                              color: selected
+                                ? "primary.main"
+                                : "text.secondary",
+                              "&:hover": { color: "primary.main" },
+                            }}
+                          >
+                            {selected ? (
+                              <CheckCircleRoundedIcon sx={{ fontSize: 19 }} />
+                            ) : (
+                              <RadioButtonUncheckedRoundedIcon
+                                sx={{ fontSize: 19 }}
+                              />
+                            )}
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </Stack>
+                  )}
                 </Stack>
-              </Stack>
+              )}
 
               {/* Middle: Filename */}
               <Box sx={{ minWidth: 0 }}>
@@ -690,7 +1017,7 @@ function FileGrid({
                     sx={{
                       fontSize: "0.95rem",
                       fontWeight: 600,
-                      color: "text.primary",
+                      color: lockedFile ? "text.secondary" : "text.primary",
                       lineHeight: 1.4,
                     }}
                   >

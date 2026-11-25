@@ -2,11 +2,20 @@ export interface DriveEnv {
   WEBDAV_USERNAME?: string;
   WEBDAV_PASSWORD?: string;
   WEBDAV_PUBLIC_READ?: string;
+  GUEST_ALLOW_FILE_READ?: string;
   AUTH_SECRET?: string;
   PRIVATE_DIRS?: string;
   SESSION_TTL_DAYS?: string;
   BUCKET?: R2Bucket;
   [key: string]: unknown;
+}
+
+export type ShareScope = "file" | "dir";
+
+export interface VerifiedSharePayload {
+  key: string;
+  scope: ShareScope;
+  expiresAt: number;
 }
 
 export interface AuthResult {
@@ -26,7 +35,7 @@ export const CONFIG_OBJECT_KEY = "_$flaredrive$/config.json";
 
 const DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 const SHORT_SESSION_TTL_SECONDS = 24 * 60 * 60; // 1 day
-const MAX_SHARE_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const MAX_SHARE_TTL_SECONDS = 3650 * 24 * 60 * 60; // 10 years for long-term share links
 
 // In-memory per-isolate login rate limiter
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
@@ -257,6 +266,10 @@ export function isPublicReadEnabled(env: DriveEnv): boolean {
   return env.WEBDAV_PUBLIC_READ === "1";
 }
 
+export function isGuestFileLockEnabled(env: DriveEnv): boolean {
+  return env.GUEST_ALLOW_FILE_READ !== "1";
+}
+
 export async function verifyCredentials(
   env: DriveEnv,
   username: string,
@@ -378,7 +391,8 @@ export async function authenticateRequest(
 export async function createShareToken(
   env: DriveEnv,
   key: string,
-  expiresInSeconds: number
+  expiresInSeconds: number,
+  scope: ShareScope = "file"
 ): Promise<{ token: string; expiresAt: number }> {
   const clampedTtl = Math.max(
     60,
@@ -387,22 +401,22 @@ export async function createShareToken(
   const exp = Math.floor(Date.now() / 1000) + clampedTtl;
   const normalizedKey = normalizeDrivePath(key);
   const token = await signPayload(
-    { k: normalizedKey, exp, v: 1 },
+    { k: normalizedKey, t: scope, exp, v: 2 },
     getSigningSecret(env, "share")
   );
   return { token, expiresAt: exp * 1000 };
 }
 
-export async function verifyShareToken(
+export async function parseVerifiedShareToken(
   env: DriveEnv,
-  token: string,
-  requestedPath: string
-): Promise<boolean> {
-  if (!isAuthConfigured(env) || !token) return false;
-  const payload = await verifyPayload<{ k?: string; exp?: number }>(
-    token,
-    getSigningSecret(env, "share")
-  );
+  token: string
+): Promise<VerifiedSharePayload | null> {
+  if (!isAuthConfigured(env) || !token) return null;
+  const payload = await verifyPayload<{
+    k?: string;
+    t?: string;
+    exp?: number;
+  }>(token, getSigningSecret(env, "share"));
   const nowSec = Math.floor(Date.now() / 1000);
   if (
     !payload ||
@@ -410,9 +424,41 @@ export async function verifyShareToken(
     typeof payload.exp !== "number" ||
     payload.exp <= nowSec
   ) {
-    return false;
+    return null;
   }
-  return timingSafeEqual(payload.k, normalizeDrivePath(requestedPath));
+  const scope: ShareScope = payload.t === "dir" ? "dir" : "file";
+  const normalizedKey = normalizeDrivePath(payload.k);
+  if (!normalizedKey || hasPathTraversal(normalizedKey)) return null;
+  return {
+    key: normalizedKey,
+    scope,
+    expiresAt: payload.exp * 1000,
+  };
+}
+
+export async function isPathAllowedByShare(
+  share: VerifiedSharePayload,
+  requestedPath: string
+): Promise<boolean> {
+  const normalizedTarget = normalizeDrivePath(requestedPath);
+  if (!normalizedTarget || hasPathTraversal(normalizedTarget)) return false;
+  if (share.scope === "file") {
+    return timingSafeEqual(share.key, normalizedTarget);
+  }
+  return (
+    normalizedTarget === share.key ||
+    normalizedTarget.startsWith(`${share.key}/`)
+  );
+}
+
+export async function verifyShareToken(
+  env: DriveEnv,
+  token: string,
+  requestedPath: string
+): Promise<boolean> {
+  const share = await parseVerifiedShareToken(env, token);
+  if (!share) return false;
+  return isPathAllowedByShare(share, requestedPath);
 }
 
 export function normalizeDrivePath(path: string): string {
