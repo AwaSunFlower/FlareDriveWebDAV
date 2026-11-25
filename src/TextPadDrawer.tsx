@@ -34,15 +34,18 @@ import OpenInFullRoundedIcon from "@mui/icons-material/OpenInFullRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
 import { encodeKey, extractFilename, FileItem } from "./FileGrid";
 import { getMimeTypeForFilename } from "./MimeIcon";
+import { SPA_REQUEST_HEADERS } from "./app/api";
 
 interface TextPadDrawerProps {
   open: boolean;
   setOpen: (open: boolean) => void;
   cwd: string;
+  authenticated: boolean;
   initialFile: FileItem | null;
   editableFiles: FileItem[];
   onSelectFile: (file: FileItem | null) => void;
   onUpload: () => void;
+  onRequireLogin: () => void;
   onNotify: (
     message: string,
     severity?: "success" | "info" | "warning" | "error"
@@ -283,10 +286,12 @@ const TextPadDrawer: React.FC<TextPadDrawerProps> = ({
   open,
   setOpen,
   cwd,
+  authenticated,
   initialFile,
   editableFiles,
   onSelectFile,
   onUpload,
+  onRequireLogin,
   onNotify,
 }) => {
   const theme = useTheme();
@@ -325,7 +330,10 @@ const TextPadDrawer: React.FC<TextPadDrawerProps> = ({
       setLoadingFile(true);
       setLastSavedAt(null);
 
-      fetch(`/webdav/${encodeKey(initialFile.key)}`, { cache: "no-store" })
+      fetch(`/webdav/${encodeKey(initialFile.key)}`, {
+        cache: "no-store",
+        headers: SPA_REQUEST_HEADERS,
+      })
         .then(async (res) => {
           if (!res.ok) throw new Error(`读取文件失败 (${res.status})`);
           return res.text();
@@ -414,6 +422,11 @@ const TextPadDrawer: React.FC<TextPadDrawerProps> = ({
   };
 
   const handleSaveNote = useCallback(async () => {
+    if (!authenticated) {
+      onNotify("请先登录管理员账号再保存到云盘", "info");
+      onRequireLogin();
+      return;
+    }
     const finalName = noteName.trim();
     if (!finalName || saving) return;
     if (finalName.includes("/")) {
@@ -430,13 +443,17 @@ const TextPadDrawer: React.FC<TextPadDrawerProps> = ({
     try {
       const res = await fetch(`/webdav/${encodeKey(targetKey)}`, {
         method: "PUT",
-        headers: { "Content-Type": mimeType },
+        headers: {
+          "Content-Type": mimeType,
+          ...SPA_REQUEST_HEADERS,
+        },
         body: new Blob([noteText], { type: mimeType }),
       });
 
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
-          throw new Error("保存失败：需要 WebDAV 写入认证权限");
+          onRequireLogin();
+          throw new Error("保存失败：请先登录管理员账号");
         }
         throw new Error(`保存失败 (${res.status})`);
       }
@@ -460,7 +477,18 @@ const TextPadDrawer: React.FC<TextPadDrawerProps> = ({
     } finally {
       setSaving(false);
     }
-  }, [cwd, draftKey, initialFile, noteName, noteText, onNotify, onUpload, saving]);
+  }, [
+    authenticated,
+    cwd,
+    draftKey,
+    initialFile,
+    noteName,
+    noteText,
+    onNotify,
+    onRequireLogin,
+    onUpload,
+    saving,
+  ]);
 
   // Ctrl+S / Cmd+S shortcut while open
   useEffect(() => {
@@ -974,7 +1002,11 @@ const TextPadDrawer: React.FC<TextPadDrawerProps> = ({
               }
               sx={{ px: 2 }}
             >
-              {saving ? "保存中…" : "保存并上传 (Ctrl+S)"}
+              {saving
+                ? "保存中…"
+                : authenticated
+                ? "保存并上传 (Ctrl+S)"
+                : "登录以保存"}
             </Button>
           </Stack>
         </Stack>

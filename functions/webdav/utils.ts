@@ -2,6 +2,8 @@ export interface RequestHandlerParams {
   bucket: R2Bucket;
   path: string;
   request: Request;
+  hiddenPrivateDirs?: string[];
+  isSharedAccess?: boolean;
 }
 
 export const WEBDAV_ENDPOINT = "/webdav/";

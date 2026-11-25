@@ -13,12 +13,14 @@ import {
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import EditNoteRoundedIcon from "@mui/icons-material/EditNoteRounded";
-import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
+import LockOpenRoundedIcon from "@mui/icons-material/LockOpenRounded";
+import LockRoundedIcon from "@mui/icons-material/LockRounded";
 import RadioButtonUncheckedRoundedIcon from "@mui/icons-material/RadioButtonUncheckedRounded";
+import ShareRoundedIcon from "@mui/icons-material/ShareRounded";
 import MimeIcon, {
   getFileBadgeLabel,
   isEditableTextFile,
-  isImageFile,
+  isPreviewableMedia,
 } from "./MimeIcon";
 import { humanReadableSize } from "./app/utils";
 
@@ -44,6 +46,14 @@ export function isDirectory(file: FileItem) {
   return file.httpMetadata?.contentType === "application/x-directory";
 }
 
+export function isPathInPrivateDirs(key: string, privateDirs: string[]) {
+  const normalized = key.replace(/^\/+/, "").replace(/\/+$/, "");
+  if (!normalized || !privateDirs.length) return false;
+  return privateDirs.some(
+    (dir) => normalized === dir || normalized.startsWith(`${dir}/`)
+  );
+}
+
 function formatDateTime(value?: string) {
   if (!value) return "—";
   const date = new Date(value);
@@ -59,24 +69,30 @@ function formatDateTime(value?: string) {
 interface FileGridProps {
   files: FileItem[];
   viewMode: ViewMode;
+  authenticated: boolean;
+  privateDirs: string[];
   onCwdChange: (newCwd: string) => void;
   multiSelected: string[] | null;
   onMultiSelect: (key: string) => void;
-  onPreviewImage: (file: FileItem) => void;
+  onPreviewMedia: (file: FileItem) => void;
   onEditTextFile: (file: FileItem) => void;
-  onCopyLink: (file: FileItem) => void;
+  onOpenShare: (file: FileItem) => void;
+  onTogglePrivacy: (folderPath: string, nextPrivate: boolean) => void;
   emptyMessage?: React.ReactNode;
 }
 
 function FileGrid({
   files,
   viewMode,
+  authenticated,
+  privateDirs,
   onCwdChange,
   multiSelected,
   onMultiSelect,
-  onPreviewImage,
+  onPreviewMedia,
   onEditTextFile,
-  onCopyLink,
+  onOpenShare,
+  onTogglePrivacy,
   emptyMessage,
 }: FileGridProps) {
   const theme = useTheme();
@@ -92,8 +108,8 @@ function FileGrid({
       onMultiSelect(file.key);
     } else if (isDirectory(file)) {
       onCwdChange(file.key.replace(/\/$/, "") + "/");
-    } else if (isImageFile(file.httpMetadata?.contentType, filename)) {
-      onPreviewImage(file);
+    } else if (isPreviewableMedia(file.httpMetadata?.contentType, filename)) {
+      onPreviewMedia(file);
     } else {
       window.open(
         `/webdav/${encodeKey(file.key)}`,
@@ -153,7 +169,7 @@ function FileGrid({
         <Box
           sx={{
             display: { xs: "none", sm: "grid" },
-            gridTemplateColumns: "minmax(0, 1fr) 92px 156px 96px 118px",
+            gridTemplateColumns: "minmax(0, 1fr) 92px 150px 92px 128px",
             alignItems: "center",
             gap: 2,
             px: 2.5,
@@ -196,6 +212,8 @@ function FileGrid({
         {files.map((file, idx) => {
           const filename = extractFilename(file.key);
           const dir = isDirectory(file);
+          const cleanKey = file.key.replace(/^\/+/, "").replace(/\/+$/, "");
+          const isExactPrivateDir = dir && privateDirs.includes(cleanKey);
           const editableText =
             !dir &&
             isEditableTextFile(file.httpMetadata?.contentType, filename);
@@ -217,7 +235,7 @@ function FileGrid({
                 display: "grid",
                 gridTemplateColumns: {
                   xs: "minmax(0, 1fr) auto",
-                  sm: "minmax(0, 1fr) 92px 156px 96px 118px",
+                  sm: "minmax(0, 1fr) 92px 150px 92px 128px",
                 },
                 alignItems: "center",
                 gap: { xs: 1.25, sm: 2 },
@@ -253,15 +271,36 @@ function FileGrid({
               >
                 {renderIcon(file, "small")}
                 <Box sx={{ minWidth: 0 }}>
-                  <Tooltip title={filename} enterDelay={500}>
-                    <Typography
-                      variant="body2"
-                      noWrap
-                      sx={{ fontWeight: 600, color: "text.primary" }}
-                    >
-                      {filename}
-                    </Typography>
-                  </Tooltip>
+                  <Stack direction="row" alignItems="center" spacing={0.75}>
+                    <Tooltip title={filename} enterDelay={500}>
+                      <Typography
+                        variant="body2"
+                        noWrap
+                        sx={{ fontWeight: 600, color: "text.primary" }}
+                      >
+                        {filename}
+                      </Typography>
+                    </Tooltip>
+                    {isExactPrivateDir && (
+                      <Chip
+                        icon={
+                          <LockRoundedIcon
+                            sx={{ fontSize: "12px !important" }}
+                          />
+                        }
+                        label="私密"
+                        size="small"
+                        color="primary"
+                        variant="outlined"
+                        sx={{
+                          height: 19,
+                          fontSize: "0.66rem",
+                          fontWeight: 700,
+                          "& .MuiChip-label": { px: 0.7 },
+                        }}
+                      />
+                    )}
+                  </Stack>
                   <Typography
                     variant="caption"
                     color="text.secondary"
@@ -324,8 +363,39 @@ function FileGrid({
                 alignItems="center"
                 spacing={0.25}
               >
+                {dir && authenticated && (
+                  <Tooltip
+                    title={
+                      isExactPrivateDir
+                        ? "取消私密（对访客恢复可见）"
+                        : "设为私密目录（对未登录访客隐藏）"
+                    }
+                  >
+                    <IconButton
+                      size="small"
+                      aria-label={isExactPrivateDir ? "取消私密" : "设为私密"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onTogglePrivacy(cleanKey, !isExactPrivateDir);
+                      }}
+                      sx={{
+                        color: isExactPrivateDir
+                          ? "primary.main"
+                          : "text.secondary",
+                      }}
+                    >
+                      {isExactPrivateDir ? (
+                        <LockRoundedIcon sx={{ fontSize: 17 }} />
+                      ) : (
+                        <LockOpenRoundedIcon sx={{ fontSize: 17 }} />
+                      )}
+                    </IconButton>
+                  </Tooltip>
+                )}
                 {editableText && (
-                  <Tooltip title="在 TextPad 中编辑">
+                  <Tooltip
+                    title={authenticated ? "在 TextPad 中编辑" : "在 TextPad 中查看"}
+                  >
                     <IconButton
                       size="small"
                       aria-label="在线编辑"
@@ -344,17 +414,20 @@ function FileGrid({
                 )}
                 {!dir && (
                   <>
-                    <Tooltip title="复制直链">
+                    <Tooltip title="分享 / 限时直链">
                       <IconButton
                         size="small"
-                        aria-label="复制直链"
+                        aria-label="分享文件"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onCopyLink(file);
+                          onOpenShare(file);
                         }}
-                        sx={{ color: "text.secondary" }}
+                        sx={{
+                          color: "text.secondary",
+                          "&:hover": { color: "primary.main" },
+                        }}
                       >
-                        <LinkRoundedIcon sx={{ fontSize: 17 }} />
+                        <ShareRoundedIcon sx={{ fontSize: 17 }} />
                       </IconButton>
                     </Tooltip>
                     <Tooltip title="下载">
@@ -362,7 +435,7 @@ function FileGrid({
                         size="small"
                         aria-label="下载"
                         component="a"
-                        href={`/webdav/${encodeKey(file.key)}`}
+                        href={`/webdav/${encodeKey(file.key)}?download=1`}
                         download={filename}
                         onClick={(e) => e.stopPropagation()}
                         sx={{
@@ -408,6 +481,8 @@ function FileGrid({
       {files.map((file) => {
         const filename = extractFilename(file.key);
         const dir = isDirectory(file);
+        const cleanKey = file.key.replace(/^\/+/, "").replace(/\/+$/, "");
+        const isExactPrivateDir = dir && privateDirs.includes(cleanKey);
         const editableText =
           !dir && isEditableTextFile(file.httpMetadata?.contentType, filename);
         const selected = Boolean(multiSelected?.includes(file.key));
@@ -477,19 +552,75 @@ function FileGrid({
                 justifyContent="space-between"
                 spacing={1}
               >
-                {renderIcon(file, "medium")}
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  {renderIcon(file, "medium")}
+                  {isExactPrivateDir && (
+                    <Chip
+                      icon={
+                        <LockRoundedIcon sx={{ fontSize: "13px !important" }} />
+                      }
+                      label="私密"
+                      size="small"
+                      color="primary"
+                      variant="outlined"
+                      sx={{
+                        height: 22,
+                        fontSize: "0.7rem",
+                        fontWeight: 700,
+                      }}
+                    />
+                  )}
+                </Stack>
 
                 <Stack
                   direction="row"
                   spacing={0.25}
                   className="sf-card-actions"
                   sx={{
-                    opacity: selected || multiSelected !== null ? 1 : { xs: 0.72, sm: 0 },
+                    opacity:
+                      selected || multiSelected !== null
+                        ? 1
+                        : { xs: 0.78, sm: 0 },
                     transition: "opacity 0.18s ease",
                   }}
                 >
+                  {dir && authenticated && (
+                    <Tooltip
+                      title={
+                        isExactPrivateDir
+                          ? "取消私密"
+                          : "设为私密（对访客隐藏）"
+                      }
+                    >
+                      <IconButton
+                        size="small"
+                        aria-label={isExactPrivateDir ? "取消私密" : "设为私密"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onTogglePrivacy(cleanKey, !isExactPrivateDir);
+                        }}
+                        sx={{
+                          p: 0.5,
+                          color: isExactPrivateDir
+                            ? "primary.main"
+                            : "text.secondary",
+                          "&:hover": { color: "primary.main" },
+                        }}
+                      >
+                        {isExactPrivateDir ? (
+                          <LockRoundedIcon sx={{ fontSize: 17 }} />
+                        ) : (
+                          <LockOpenRoundedIcon sx={{ fontSize: 17 }} />
+                        )}
+                      </IconButton>
+                    </Tooltip>
+                  )}
                   {editableText && (
-                    <Tooltip title="在 TextPad 中编辑">
+                    <Tooltip
+                      title={
+                        authenticated ? "在 TextPad 中编辑" : "在 TextPad 中查看"
+                      }
+                    >
                       <IconButton
                         size="small"
                         aria-label="在线编辑"
@@ -508,13 +639,13 @@ function FileGrid({
                     </Tooltip>
                   )}
                   {!dir && (
-                    <Tooltip title="复制直链">
+                    <Tooltip title="分享 / 限时直链">
                       <IconButton
                         size="small"
-                        aria-label="复制直链"
+                        aria-label="分享文件"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onCopyLink(file);
+                          onOpenShare(file);
                         }}
                         sx={{
                           p: 0.5,
@@ -522,7 +653,7 @@ function FileGrid({
                           "&:hover": { color: "primary.main" },
                         }}
                       >
-                        <LinkRoundedIcon sx={{ fontSize: 17 }} />
+                        <ShareRoundedIcon sx={{ fontSize: 17 }} />
                       </IconButton>
                     </Tooltip>
                   )}

@@ -1,10 +1,16 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Badge,
   Box,
+  Button,
   Chip,
+  Divider,
   IconButton,
   InputBase,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
   PaletteMode,
   Stack,
   Tooltip,
@@ -12,11 +18,15 @@ import {
   useTheme,
 } from "@mui/material";
 import ClearRoundedIcon from "@mui/icons-material/ClearRounded";
+import CloudQueueRoundedIcon from "@mui/icons-material/CloudQueueRounded";
 import DarkModeRoundedIcon from "@mui/icons-material/DarkModeRounded";
 import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
+import LoginRoundedIcon from "@mui/icons-material/LoginRounded";
+import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import SwapVertRoundedIcon from "@mui/icons-material/SwapVertRounded";
+import VerifiedUserRoundedIcon from "@mui/icons-material/VerifiedUserRounded";
 import SunflowerLogo from "./SunflowerLogo";
 import { useTransferQueue } from "./app/transferQueue";
 
@@ -29,6 +39,11 @@ interface HeaderProps {
   colorMode: PaletteMode;
   onToggleColorMode: () => void;
   setShowProgressDialog: (show: boolean) => void;
+  onOpenStats: () => void;
+  authenticated: boolean;
+  username: string | null;
+  onOpenLogin: () => void;
+  onLogout: () => void;
 }
 
 function Header({
@@ -40,11 +55,18 @@ function Header({
   colorMode,
   onToggleColorMode,
   setShowProgressDialog,
+  onOpenStats,
+  authenticated,
+  username,
+  onOpenLogin,
+  onLogout,
 }: HeaderProps) {
   const theme = useTheme();
   const isLight = theme.palette.mode === "light";
   const searchInputRef = useRef<HTMLInputElement>(null);
   const transferQueue = useTransferQueue();
+  const [accountMenuAnchor, setAccountMenuAnchor] =
+    useState<null | HTMLElement>(null);
 
   const activeTransfers = transferQueue.filter(
     (task) => task.status === "pending" || task.status === "in-progress"
@@ -81,7 +103,7 @@ function Header({
         display: "flex",
         alignItems: "center",
         width: "100%",
-        maxWidth: { xs: "100%", md: 460 },
+        maxWidth: { xs: "100%", md: 420 },
         px: 1.75,
         py: 0.65,
         borderRadius: "999px",
@@ -165,6 +187,19 @@ function Header({
     </Box>
   );
 
+  const iconBtnSx = {
+    borderRadius: "12px",
+    border: "1px solid",
+    borderColor: "divider",
+    backgroundColor: isLight
+      ? "rgba(255, 255, 255, 0.72)"
+      : "rgba(38, 34, 29, 0.72)",
+    "&:hover": {
+      borderColor: "primary.main",
+      color: "primary.main",
+    },
+  };
+
   return (
     <Box
       component="header"
@@ -193,7 +228,7 @@ function Header({
           direction="row"
           alignItems="center"
           justifyContent="space-between"
-          spacing={2}
+          spacing={1.5}
         >
           {/* Brand */}
           <Stack
@@ -215,7 +250,7 @@ function Header({
               flexShrink: 0,
               borderRadius: 2,
               py: 0.25,
-              pr: 0.75,
+              pr: 0.5,
               transition: "opacity 0.15s ease",
               "&:hover": { opacity: 0.86 },
             }}
@@ -226,7 +261,7 @@ function Header({
                 <Typography
                   variant="h6"
                   sx={{
-                    fontSize: { xs: "1.05rem", sm: "1.16rem" },
+                    fontSize: { xs: "1.02rem", sm: "1.14rem" },
                     lineHeight: 1.2,
                     fontWeight: 700,
                     background: isLight
@@ -242,7 +277,7 @@ function Header({
                   label="WebDAV"
                   size="small"
                   sx={{
-                    display: { xs: "none", sm: "inline-flex" },
+                    display: { xs: "none", lg: "inline-flex" },
                     height: 20,
                     fontSize: "0.68rem",
                     fontWeight: 700,
@@ -276,56 +311,46 @@ function Header({
 
           {/* Right Controls */}
           <Stack direction="row" alignItems="center" spacing={0.75}>
-            <Tooltip title="传输队列">
+            <Tooltip title="R2 存储空间统计" disableFocusListener>
               <IconButton
-                aria-label="传输队列"
-                onClick={() => setShowProgressDialog(true)}
-                sx={{
-                  borderRadius: "12px",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  backgroundColor: isLight
-                    ? "rgba(255, 255, 255, 0.72)"
-                    : "rgba(38, 34, 29, 0.72)",
-                  "&:hover": {
-                    borderColor: "primary.main",
-                    color: "primary.main",
-                  },
-                }}
+                aria-label="存储空间统计"
+                onClick={onOpenStats}
+                sx={iconBtnSx}
               >
-                <Badge
-                  badgeContent={activeTransfers}
-                  color="primary"
-                  max={99}
-                  sx={{
-                    "& .MuiBadge-badge": {
-                      fontSize: "0.68rem",
-                      minWidth: 17,
-                      height: 17,
-                    },
-                  }}
-                >
-                  <SwapVertRoundedIcon sx={{ fontSize: 20 }} />
-                </Badge>
+                <CloudQueueRoundedIcon sx={{ fontSize: 20 }} />
               </IconButton>
             </Tooltip>
 
-            <Tooltip title="刷新当前目录">
+            {authenticated && (
+              <Tooltip title="传输队列" disableFocusListener>
+                <IconButton
+                  aria-label="传输队列"
+                  onClick={() => setShowProgressDialog(true)}
+                  sx={iconBtnSx}
+                >
+                  <Badge
+                    badgeContent={activeTransfers}
+                    color="primary"
+                    max={99}
+                    sx={{
+                      "& .MuiBadge-badge": {
+                        fontSize: "0.68rem",
+                        minWidth: 17,
+                        height: 17,
+                      },
+                    }}
+                  >
+                    <SwapVertRoundedIcon sx={{ fontSize: 20 }} />
+                  </Badge>
+                </IconButton>
+              </Tooltip>
+            )}
+
+            <Tooltip title="刷新当前目录" disableFocusListener>
               <IconButton
                 aria-label="刷新"
                 onClick={onRefresh}
-                sx={{
-                  borderRadius: "12px",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  backgroundColor: isLight
-                    ? "rgba(255, 255, 255, 0.72)"
-                    : "rgba(38, 34, 29, 0.72)",
-                  "&:hover": {
-                    borderColor: "primary.main",
-                    color: "primary.main",
-                  },
-                }}
+                sx={iconBtnSx}
               >
                 <RefreshRoundedIcon
                   sx={{
@@ -350,12 +375,7 @@ function Header({
                 aria-label="切换深浅色主题"
                 onClick={onToggleColorMode}
                 sx={{
-                  borderRadius: "12px",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  backgroundColor: isLight
-                    ? "rgba(255, 255, 255, 0.72)"
-                    : "rgba(38, 34, 29, 0.72)",
+                  ...iconBtnSx,
                   color: isLight ? "#B45309" : "#FBBF24",
                   "&:hover": {
                     borderColor: "primary.main",
@@ -372,6 +392,101 @@ function Header({
                 )}
               </IconButton>
             </Tooltip>
+
+            {/* Auth Control */}
+            {authenticated ? (
+              <>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={
+                    <VerifiedUserRoundedIcon
+                      sx={{ fontSize: 17, color: "secondary.main" }}
+                    />
+                  }
+                  onClick={(e) => setAccountMenuAnchor(e.currentTarget)}
+                  sx={{
+                    px: 1.4,
+                    py: 0.72,
+                    borderRadius: "12px",
+                    borderColor: isLight
+                      ? "rgba(101, 163, 13, 0.35)"
+                      : "rgba(163, 230, 53, 0.35)",
+                    backgroundColor: isLight
+                      ? "rgba(101, 163, 13, 0.08)"
+                      : "rgba(163, 230, 53, 0.08)",
+                    color: "text.primary",
+                    fontSize: "0.82rem",
+                    maxWidth: 140,
+                  }}
+                >
+                  <Box
+                    component="span"
+                    sx={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {username || "管理员"}
+                  </Box>
+                </Button>
+                <Menu
+                  anchorEl={accountMenuAnchor}
+                  open={Boolean(accountMenuAnchor)}
+                  onClose={() => setAccountMenuAnchor(null)}
+                >
+                  <Box sx={{ px: 2, py: 1 }}>
+                    <Typography variant="subtitle2" fontWeight={700}>
+                      {username || "管理员"}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      已开启完整读写与私密目录权限
+                    </Typography>
+                  </Box>
+                  <Divider />
+                  <MenuItem
+                    onClick={() => {
+                      setAccountMenuAnchor(null);
+                      onOpenStats();
+                    }}
+                  >
+                    <ListItemIcon>
+                      <CloudQueueRoundedIcon fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText primary="R2 存储空间统计" />
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      setAccountMenuAnchor(null);
+                      onLogout();
+                    }}
+                    sx={{ color: "error.main" }}
+                  >
+                    <ListItemIcon sx={{ color: "error.main" }}>
+                      <LogoutRoundedIcon fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText primary="退出登录" />
+                  </MenuItem>
+                </Menu>
+              </>
+            ) : (
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={<LoginRoundedIcon sx={{ fontSize: 17 }} />}
+                onClick={onOpenLogin}
+                sx={{
+                  px: { xs: 1.4, sm: 1.85 },
+                  py: 0.78,
+                  borderRadius: "12px",
+                  fontSize: "0.82rem",
+                  flexShrink: 0,
+                }}
+              >
+                登录
+              </Button>
+            )}
           </Stack>
         </Stack>
 

@@ -1,14 +1,25 @@
-import { notFound, parseBucketPath } from "./utils";
+import {
+  authenticateRequest,
+  DriveEnv,
+  getEffectivePrivateDirs,
+  hasPathTraversal,
+  INTERNAL_PREFIX,
+  isAuthConfigured,
+  isPrivatePath,
+  isPublicReadEnabled,
+  THUMBNAILS_PREFIX,
+  verifyShareToken,
+} from "../../utils/auth";
+import { notFound, parseBucketPath, RequestHandlerParams } from "./utils";
 import { handleRequestCopy } from "./copy";
 import { handleRequestDelete } from "./delete";
 import { handleRequestGet } from "./get";
 import { handleRequestHead } from "./head";
 import { handleRequestMkcol } from "./mkcol";
 import { handleRequestMove } from "./move";
+import { handleRequestPost } from "./post";
 import { handleRequestPropfind } from "./propfind";
 import { handleRequestPut } from "./put";
-import { RequestHandlerParams } from "./utils";
-import { handleRequestPost } from "./post";
 
 async function handleRequestOptions() {
   return new Response(null, {
@@ -38,41 +49,75 @@ const HANDLERS: Record<
   DELETE: handleRequestDelete,
 };
 
-export const onRequest: PagesFunction<{
-  WEBDAV_USERNAME: string;
-  WEBDAV_PASSWORD: string;
-  WEBDAV_PUBLIC_READ?: string;
-}> = async function (context) {
-  const env = context.env;
-  const request: Request = context.request;
-  if (request.method === "OPTIONS") return handleRequestOptions();
-
-  const skipAuth =
-    env.WEBDAV_PUBLIC_READ === "1" &&
-    ["GET", "HEAD", "PROPFIND"].includes(request.method);
-
-  if (!skipAuth) {
-    if (!env.WEBDAV_USERNAME || !env.WEBDAV_PASSWORD)
-      return new Response("WebDAV protocol is not enabled", { status: 403 });
-
-    const auth = request.headers.get("Authorization");
-    if (!auth) {
-      return new Response("Unauthorized", {
-        status: 401,
-        headers: { "WWW-Authenticate": `Basic realm="WebDAV"` },
-      });
-    }
-    const expectedAuth = `Basic ${btoa(
-      `${env.WEBDAV_USERNAME}:${env.WEBDAV_PASSWORD}`
-    )}`;
-    if (auth !== expectedAuth)
-      return new Response("Unauthorized", { status: 401 });
+function unauthorizedResponse(request: Request): Response {
+  const headers = new Headers({
+    "Cache-Control": "no-store",
+  });
+  // Suppress native browser Basic Auth prompt for our SPA fetch calls,
+  // while keeping RFC-compliant Basic Auth challenge for WebDAV clients.
+  if (request.headers.get("X-Requested-With") !== "SunflowerDrive") {
+    headers.set("WWW-Authenticate", 'Basic realm="WebDAV"');
   }
+  return new Response("Unauthorized", { status: 401, headers });
+}
+
+export const onRequest: PagesFunction<DriveEnv> = async function (context) {
+  const { env } = context;
+  const request: Request = context.request;
+  const method = request.method;
+
+  if (method === "OPTIONS") return handleRequestOptions();
 
   const [bucket, path] = parseBucketPath(context);
   if (!bucket) return notFound();
 
-  const method: string = (context.request as Request).method;
+  if (hasPathTraversal(path)) {
+    return new Response("Bad Request", { status: 400 });
+  }
+
+  // Never expose internal configuration objects over WebDAV
+  if (path.startsWith(INTERNAL_PREFIX) && !path.startsWith(THUMBNAILS_PREFIX)) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  const auth = await authenticateRequest(request, env);
+  const url = new URL(request.url);
+  const shareToken = url.searchParams.get("share");
+
+  let hiddenPrivateDirs: string[] = [];
+  let isSharedAccess = false;
+
+  if (!auth.authenticated) {
+    // 1. Allow valid signed temporary share link for single-file GET/HEAD
+    if (
+      shareToken &&
+      (method === "GET" || method === "HEAD") &&
+      (await verifyShareToken(env, shareToken, path))
+    ) {
+      isSharedAccess = true;
+    } else if (
+      isPublicReadEnabled(env) &&
+      ["GET", "HEAD", "PROPFIND"].includes(method)
+    ) {
+      // 2. Public read mode — hide private directories & files from unauthenticated visitors
+      hiddenPrivateDirs = await getEffectivePrivateDirs(bucket, env);
+      if (path !== "" && isPrivatePath(path, hiddenPrivateDirs)) {
+        return notFound();
+      }
+    } else {
+      if (!isAuthConfigured(env)) {
+        return new Response("WebDAV protocol is not enabled", { status: 403 });
+      }
+      return unauthorizedResponse(request);
+    }
+  }
+
   const handler = HANDLERS[method] ?? handleMethodNotAllowed;
-  return handler({ bucket, path, request: context.request });
+  return handler({
+    bucket,
+    path,
+    request,
+    hiddenPrivateDirs,
+    isSharedAccess,
+  });
 };

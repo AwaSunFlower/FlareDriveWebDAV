@@ -1,5 +1,4 @@
-import { notFound } from "./utils";
-import { RequestHandlerParams } from "./utils";
+import { notFound, RequestHandlerParams } from "./utils";
 
 export async function handleRequestHead({
   bucket,
@@ -10,5 +9,10 @@ export async function handleRequestHead({
 
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
+  headers.set("Accept-Ranges", "bytes");
+  headers.set("Content-Length", obj.size.toString());
+  if (obj.httpEtag) {
+    headers.set("ETag", obj.httpEtag);
+  }
   return new Response(null, { headers });
 }

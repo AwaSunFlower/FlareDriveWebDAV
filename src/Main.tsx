@@ -38,6 +38,7 @@ import CreateNewFolderRoundedIcon from "@mui/icons-material/CreateNewFolderRound
 import FolderOpenRoundedIcon from "@mui/icons-material/FolderOpenRounded";
 import GridViewRoundedIcon from "@mui/icons-material/GridViewRounded";
 import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
+import LockPersonRoundedIcon from "@mui/icons-material/LockPersonRounded";
 import NavigateNextRoundedIcon from "@mui/icons-material/NavigateNextRounded";
 import NoteAddRoundedIcon from "@mui/icons-material/NoteAddRounded";
 import SortRoundedIcon from "@mui/icons-material/SortRounded";
@@ -48,13 +49,22 @@ import FileGrid, {
   extractFilename,
   FileItem,
   isDirectory,
+  isPathInPrivateDirs,
   ViewMode,
 } from "./FileGrid";
-import ImagePreviewDialog from "./ImagePreviewDialog";
+import MediaPreviewDialog from "./MediaPreviewDialog";
 import { isEditableTextFile, isImageFile } from "./MimeIcon";
+import MoveCopyDialog from "./MoveCopyDialog";
 import MultiSelectToolbar from "./MultiSelectToolbar";
+import ShareDialog from "./ShareDialog";
 import TextPadDrawer from "./TextPadDrawer";
 import UploadDrawer, { UploadFab } from "./UploadDrawer";
+import {
+  AuthRequiredError,
+  AuthStatus,
+  setFolderPrivacy,
+  SPA_REQUEST_HEADERS,
+} from "./app/api";
 import { copyPaste, createFolder, fetchPath } from "./app/transfer";
 import { useTransferQueue, useUploadEnqueue } from "./app/transferQueue";
 import { humanReadableSize } from "./app/utils";
@@ -185,6 +195,9 @@ interface MainProps {
   onClearSearch: () => void;
   refreshToken: number;
   resetRootToken: number;
+  authStatus: AuthStatus;
+  onRequireLogin: () => void;
+  onPrivateDirsChange: (dirs: string[]) => void;
   onRefreshingChange: (loading: boolean) => void;
   onNotify: (message: string, severity?: NotifySeverity) => void;
 }
@@ -194,11 +207,15 @@ function Main({
   onClearSearch,
   refreshToken,
   resetRootToken,
+  authStatus,
+  onRequireLogin,
+  onPrivateDirsChange,
   onRefreshingChange,
   onNotify,
 }: MainProps) {
   const theme = useTheme();
   const isLight = theme.palette.mode === "light";
+  const { authenticated, publicRead, privateDirs } = authStatus;
 
   const [cwd, setCwd] = useState("");
   const [files, setFiles] = useState<FileItem[]>([]);
@@ -228,8 +245,13 @@ function Main({
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [moveCopyState, setMoveCopyState] = useState<{
+    open: boolean;
+    mode: "move" | "copy";
+  }>({ open: false, mode: "move" });
   const [dialogSubmitting, setDialogSubmitting] = useState(false);
-  const [previewImage, setPreviewImage] = useState<FileItem | null>(null);
+  const [previewMedia, setPreviewMedia] = useState<FileItem | null>(null);
+  const [shareFile, setShareFile] = useState<FileItem | null>(null);
 
   // Drag & drop state using counter so child elements don't cause flicker
   const [dragging, setDragging] = useState(false);
@@ -275,18 +297,25 @@ function Main({
         setFiles(fetchedFiles);
         setMultiSelected(null);
       })
-      .catch((err: Error) => {
-        onNotify(err?.message || "加载文件列表失败", "error");
+      .catch((err: unknown) => {
+        if (err instanceof AuthRequiredError) {
+          onRequireLogin();
+          return;
+        }
+        onNotify(
+          err instanceof Error ? err.message : "加载文件列表失败",
+          "error"
+        );
       })
       .finally(() => {
         setLoading(false);
         onRefreshingChange(false);
       });
-  }, [cwd, onNotify, onRefreshingChange]);
+  }, [cwd, onNotify, onRefreshingChange, onRequireLogin]);
 
   useEffect(() => {
     fetchFiles();
-  }, [fetchFiles, refreshToken]);
+  }, [fetchFiles, refreshToken, authenticated]);
 
   useEffect(() => {
     if (resetRootToken > 0) {
@@ -301,13 +330,21 @@ function Main({
     if (["pending", "in-progress"].includes(lastFile.status)) {
       setLastUploadKey(lastFile.remoteKey);
     } else if (lastUploadKey) {
-      fetchFiles();
       setLastUploadKey(null);
       if (lastFile.status === "completed") {
+        fetchFiles();
         onNotify(`已上传：${lastFile.name}`, "success");
+      } else if (lastFile.status === "failed") {
+        if (lastFile.error instanceof AuthRequiredError) {
+          onRequireLogin();
+        }
+        onNotify(
+          lastFile.error?.message || `上传 ${lastFile.name} 失败`,
+          "error"
+        );
       }
     }
-  }, [fetchFiles, lastUploadKey, onNotify, transferQueue]);
+  }, [fetchFiles, lastUploadKey, onNotify, onRequireLogin, transferQueue]);
 
   const filteredFiles = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -418,30 +455,30 @@ function Main({
     [onNotify]
   );
 
-  const handleShareSelected = useCallback(async () => {
-    if (multiSelected?.length !== 1) return;
-    const key = multiSelected[0];
-    const url = new URL(
-      `/webdav/${encodeKey(key)}`,
-      window.location.href
-    ).toString();
-
-    if (typeof navigator.share === "function") {
+  const handleTogglePrivacy = useCallback(
+    async (folderPath: string, nextPrivate: boolean) => {
       try {
-        await navigator.share({ title: extractFilename(key), url });
-        return;
-      } catch {
-        // fallback to clipboard
+        const res = await setFolderPrivacy(folderPath, nextPrivate);
+        onPrivateDirsChange(res.privateDirs);
+        onNotify(
+          nextPrivate
+            ? `已将「${extractFilename(folderPath)}」设为私密目录（未登录访客不可见）`
+            : `已取消「${extractFilename(folderPath)}」的私密保护`,
+          "success"
+        );
+      } catch (err) {
+        if (err instanceof AuthRequiredError) {
+          onRequireLogin();
+          return;
+        }
+        onNotify(
+          err instanceof Error ? err.message : "更新目录权限失败",
+          "error"
+        );
       }
-    }
-
-    try {
-      await navigator.clipboard.writeText(url);
-      onNotify("已复制文件直链到剪贴板", "success");
-    } catch {
-      onNotify("无法复制链接", "error");
-    }
-  }, [multiSelected, onNotify]);
+    },
+    [onNotify, onPrivateDirsChange, onRequireLogin]
+  );
 
   const handleCreateFolderSubmit = async () => {
     if (!newFolderName.trim()) return;
@@ -455,6 +492,11 @@ function Main({
         fetchFiles();
       }
     } catch (err) {
+      if (err instanceof AuthRequiredError) {
+        setFolderDialogOpen(false);
+        onRequireLogin();
+        return;
+      }
       onNotify(
         err instanceof Error ? err.message : "创建文件夹失败",
         "error"
@@ -484,6 +526,11 @@ function Main({
       setRenameDialogOpen(false);
       fetchFiles();
     } catch (err) {
+      if (err instanceof AuthRequiredError) {
+        setRenameDialogOpen(false);
+        onRequireLogin();
+        return;
+      }
       onNotify(err instanceof Error ? err.message : "重命名失败", "error");
     } finally {
       setDialogSubmitting(false);
@@ -497,7 +544,9 @@ function Main({
       for (const key of multiSelected) {
         const res = await fetch(`/webdav/${encodeKey(key)}`, {
           method: "DELETE",
+          headers: SPA_REQUEST_HEADERS,
         });
+        if (res.status === 401) throw new AuthRequiredError();
         if (!res.ok) {
           throw new Error(`删除 ${extractFilename(key)} 失败 (${res.status})`);
         }
@@ -506,10 +555,21 @@ function Main({
       setDeleteDialogOpen(false);
       fetchFiles();
     } catch (err) {
+      if (err instanceof AuthRequiredError) {
+        setDeleteDialogOpen(false);
+        onRequireLogin();
+        return;
+      }
       onNotify(err instanceof Error ? err.message : "删除失败", "error");
     } finally {
       setDialogSubmitting(false);
     }
+  };
+
+  const handleShareSelectedFromToolbar = () => {
+    if (multiSelected?.length !== 1) return;
+    const found = files.find((f) => f.key === multiSelected[0]);
+    if (found) setShareFile(found);
   };
 
   return (
@@ -528,7 +588,7 @@ function Main({
       }}
       onDragOver={(e) => {
         e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
+        e.dataTransfer.dropEffect = authenticated ? "copy" : "none";
       }}
       onDragLeave={(e) => {
         e.preventDefault();
@@ -542,18 +602,22 @@ function Main({
         e.preventDefault();
         dragCounter.current = 0;
         setDragging(false);
-        if (e.dataTransfer.files?.length) {
-          uploadEnqueue(
-            ...Array.from(e.dataTransfer.files).map((file) => ({
-              file,
-              basedir: cwd,
-            }))
-          );
-          onNotify(
-            `已加入 ${e.dataTransfer.files.length} 个文件到上传队列`,
-            "info"
-          );
+        if (!e.dataTransfer.files?.length) return;
+        if (!authenticated) {
+          onNotify("访客只读模式下无法上传，请先登录管理员账号", "info");
+          onRequireLogin();
+          return;
         }
+        uploadEnqueue(
+          ...Array.from(e.dataTransfer.files).map((file) => ({
+            file,
+            basedir: cwd,
+          }))
+        );
+        onNotify(
+          `已加入 ${e.dataTransfer.files.length} 个文件到上传队列`,
+          "info"
+        );
       }}
     >
       {/* Drag Overlay */}
@@ -591,7 +655,7 @@ function Main({
               sx={{ fontSize: 56, color: "primary.main", mb: 1.5 }}
             />
             <Typography variant="h6" gutterBottom>
-              松手即可上传文件
+              {authenticated ? "松手即可上传文件" : "请先登录管理员后再上传"}
             </Typography>
             <Typography variant="body2" color="text.secondary">
               目标目录：{cwd ? `/${cwd}` : "根目录"}
@@ -655,6 +719,21 @@ function Main({
                     ? ` · 共 ${humanReadableSize(totalSize)}`
                     : ""}
                 </Typography>
+                {!authenticated && (
+                  <Chip
+                    size="small"
+                    label="访客只读模式"
+                    sx={{
+                      height: 20,
+                      fontSize: "0.69rem",
+                      fontWeight: 700,
+                      backgroundColor: isLight
+                        ? "rgba(120, 113, 108, 0.1)"
+                        : "rgba(255, 255, 255, 0.08)",
+                      color: "text.secondary",
+                    }}
+                  />
+                )}
                 {search.trim() && (
                   <Chip
                     size="small"
@@ -678,50 +757,68 @@ function Main({
                 flexShrink: 0,
               }}
             >
-              <Button
-                variant="outlined"
-                color="inherit"
-                startIcon={<CreateNewFolderRoundedIcon />}
-                onClick={() => {
-                  setNewFolderName("");
-                  setFolderDialogOpen(true);
-                }}
-                sx={{
-                  borderColor: "divider",
-                  backgroundColor: isLight
-                    ? "rgba(255, 255, 255, 0.8)"
-                    : "rgba(38, 34, 29, 0.7)",
-                  "&:hover": {
-                    borderColor: "primary.main",
-                    color: "primary.main",
-                  },
-                }}
-              >
-                新建文件夹
-              </Button>
-              <Tooltip title="新建或在线编辑文本 / Markdown / JSON 文件">
+              {authenticated ? (
+                <>
+                  <Button
+                    variant="outlined"
+                    color="inherit"
+                    startIcon={<CreateNewFolderRoundedIcon />}
+                    onClick={() => {
+                      setNewFolderName("");
+                      setFolderDialogOpen(true);
+                    }}
+                    sx={{
+                      borderColor: "divider",
+                      backgroundColor: isLight
+                        ? "rgba(255, 255, 255, 0.8)"
+                        : "rgba(38, 34, 29, 0.7)",
+                      "&:hover": {
+                        borderColor: "primary.main",
+                        color: "primary.main",
+                      },
+                    }}
+                  >
+                    新建文件夹
+                  </Button>
+                  <Tooltip title="新建或在线编辑文本 / Markdown / JSON 文件">
+                    <Button
+                      variant="outlined"
+                      color="primary"
+                      startIcon={<NoteAddRoundedIcon />}
+                      onClick={handleOpenTextPadForNew}
+                      sx={{
+                        backgroundColor: isLight
+                          ? "rgba(251, 191, 36, 0.08)"
+                          : "rgba(251, 191, 36, 0.08)",
+                      }}
+                    >
+                      TextPad
+                    </Button>
+                  </Tooltip>
+                  <Button
+                    variant="contained"
+                    startIcon={<CloudUploadRoundedIcon />}
+                    onClick={() => setShowUploadDrawer(true)}
+                    sx={{ px: 2.25 }}
+                  >
+                    上传文件
+                  </Button>
+                </>
+              ) : (
                 <Button
                   variant="outlined"
                   color="primary"
-                  startIcon={<NoteAddRoundedIcon />}
-                  onClick={handleOpenTextPadForNew}
+                  startIcon={<LockPersonRoundedIcon />}
+                  onClick={onRequireLogin}
                   sx={{
                     backgroundColor: isLight
                       ? "rgba(251, 191, 36, 0.08)"
                       : "rgba(251, 191, 36, 0.08)",
                   }}
                 >
-                  TextPad
+                  管理员登录以解锁上传与编辑
                 </Button>
-              </Tooltip>
-              <Button
-                variant="contained"
-                startIcon={<CloudUploadRoundedIcon />}
-                onClick={() => setShowUploadDrawer(true)}
-                sx={{ px: 2.25 }}
-              >
-                上传文件
-              </Button>
+              )}
             </Stack>
           </Stack>
 
@@ -741,7 +838,9 @@ function Main({
               color="text.secondary"
               sx={{ display: { xs: "none", sm: "block" } }}
             >
-              支持直接拖拽上传 · 右键或点击卡片右上角可批量操作
+              {authenticated
+                ? "支持拖拽上传 · 点击音视频/图片/PDF 直接预览 · 文件夹可一键设为私密"
+                : "点击图片/音视频/PDF 可直接在线预览 · 登录后解锁上传、编辑与私密目录"}
             </Typography>
 
             <Stack
@@ -873,12 +972,15 @@ function Main({
           <FileGrid
             files={filteredFiles}
             viewMode={viewMode}
+            authenticated={authenticated}
+            privateDirs={privateDirs}
             onCwdChange={(newCwd: string) => setCwd(newCwd)}
             multiSelected={multiSelected}
             onMultiSelect={handleMultiSelect}
-            onPreviewImage={setPreviewImage}
+            onPreviewMedia={setPreviewMedia}
             onEditTextFile={handleEditTextFile}
-            onCopyLink={handleCopyLink}
+            onOpenShare={setShareFile}
+            onTogglePrivacy={handleTogglePrivacy}
             emptyMessage={
               <Paper
                 elevation={0}
@@ -922,13 +1024,15 @@ function Main({
                 >
                   {search.trim()
                     ? "试试更换其他关键词，或者清空搜索条件"
-                    : "拖拽文件到这里，或点击下方按钮开始上传"}
+                    : authenticated
+                    ? "拖拽文件到这里，或点击下方按钮开始上传"
+                    : "此目录暂时没有可公开查看的文件"}
                 </Typography>
                 {search.trim() ? (
                   <Button variant="outlined" onClick={onClearSearch}>
                     清除搜索
                   </Button>
-                ) : (
+                ) : authenticated ? (
                   <Button
                     variant="contained"
                     startIcon={<CloudUploadRoundedIcon />}
@@ -936,15 +1040,15 @@ function Main({
                   >
                     立即上传文件
                   </Button>
-                )}
+                ) : null}
               </Paper>
             }
           />
         )}
       </Box>
 
-      {/* Mobile Floating Actions */}
-      {multiSelected === null && (
+      {/* Mobile Floating Actions (Admin only) */}
+      {authenticated && multiSelected === null && (
         <Box sx={{ display: { xs: "block", sm: "none" } }}>
           <Tooltip title="打开 TextPad 记事本" placement="left">
             <Fab
@@ -970,7 +1074,7 @@ function Main({
         </Box>
       )}
 
-      {/* Drawers & Lightbox */}
+      {/* Drawers & Dialogs */}
       <UploadDrawer
         open={showUploadDrawer}
         setOpen={setShowUploadDrawer}
@@ -986,36 +1090,67 @@ function Main({
         open={showTextPadDrawer}
         setOpen={setShowTextPadDrawer}
         cwd={cwd}
+        authenticated={authenticated}
         initialFile={editingTextFile}
         editableFiles={editableTextFiles}
         onSelectFile={setEditingTextFile}
         onUpload={fetchFiles}
+        onRequireLogin={onRequireLogin}
         onNotify={onNotify}
       />
 
-      <ImagePreviewDialog
-        file={previewImage}
+      <MediaPreviewDialog
+        file={previewMedia}
         images={imageFiles}
-        onClose={() => setPreviewImage(null)}
-        onSelectFile={setPreviewImage}
+        onClose={() => setPreviewMedia(null)}
+        onSelectFile={setPreviewMedia}
         onCopyLink={handleCopyLink}
+        onOpenShare={(f) => setShareFile(f)}
+      />
+
+      <ShareDialog
+        file={shareFile}
+        authenticated={authenticated}
+        isPrivate={
+          shareFile ? isPathInPrivateDirs(shareFile.key, privateDirs) : false
+        }
+        publicRead={publicRead}
+        onClose={() => setShareFile(null)}
+        onRequireLogin={onRequireLogin}
+        onNotify={onNotify}
+      />
+
+      <MoveCopyDialog
+        open={moveCopyState.open}
+        mode={moveCopyState.mode}
+        items={multiSelected ?? []}
+        currentCwd={cwd}
+        onClose={() => setMoveCopyState((prev) => ({ ...prev, open: false }))}
+        onSuccess={() => {
+          setMultiSelected(null);
+          fetchFiles();
+        }}
+        onNotify={onNotify}
       />
 
       <MultiSelectToolbar
         multiSelected={multiSelected}
         totalCount={filteredFiles.length}
+        authenticated={authenticated}
         onSelectAll={handleSelectAll}
         onClose={() => setMultiSelected(null)}
         onDownload={() => {
           if (multiSelected?.length !== 1) return;
           const a = document.createElement("a");
-          a.href = `/webdav/${encodeKey(multiSelected[0])}`;
+          a.href = `/webdav/${encodeKey(multiSelected[0])}?download=1`;
           a.download = extractFilename(multiSelected[0]);
           a.click();
         }}
+        onMove={() => setMoveCopyState({ open: true, mode: "move" })}
+        onCopy={() => setMoveCopyState({ open: true, mode: "copy" })}
         onRename={openRenameDialog}
         onDelete={() => setDeleteDialogOpen(true)}
-        onShare={handleShareSelected}
+        onShare={handleShareSelectedFromToolbar}
       />
 
       {/* Create Folder Dialog */}
@@ -1071,7 +1206,7 @@ function Main({
           <TextField
             autoFocus
             margin="dense"
-            label="新文件名"
+            label="新名称"
             fullWidth
             value={renameValue}
             onChange={(e) => setRenameValue(e.target.value)}
@@ -1110,7 +1245,7 @@ function Main({
         <DialogTitle>确认永久删除</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-            以下 {multiSelected?.length ?? 0} 个项目将被永久删除，操作不可撤销：
+            以下 {multiSelected?.length ?? 0} 个项目将被永久删除（目录会递归清理其下全部文件），操作不可撤销：
           </Typography>
           <Paper
             variant="outlined"

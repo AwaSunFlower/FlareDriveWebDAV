@@ -1,6 +1,7 @@
 import pLimit from "p-limit";
 
 import { encodeKey, FileItem } from "../FileGrid";
+import { AuthRequiredError, SPA_REQUEST_HEADERS } from "./api";
 import { TransferTask } from "./transferQueue";
 
 const WEBDAV_ENDPOINT = "/webdav/";
@@ -8,23 +9,32 @@ const WEBDAV_ENDPOINT = "/webdav/";
 export async function fetchPath(path: string) {
   const res = await fetch(`${WEBDAV_ENDPOINT}${encodeKey(path)}`, {
     method: "PROPFIND",
-    headers: { Depth: "1" },
+    headers: {
+      Depth: "1",
+      ...SPA_REQUEST_HEADERS,
+    },
+    cache: "no-store",
   });
 
-  if (!res.ok) throw new Error("Failed to fetch");
+  if (res.status === 401) throw new AuthRequiredError("请先登录以查看目录");
+  if (!res.ok) throw new Error(`加载目录失败 (${res.status})`);
   if (!res.headers.get("Content-Type")?.includes("application/xml"))
-    throw new Error("Invalid response");
+    throw new Error("服务端返回了无效的数据格式");
 
   const parser = new DOMParser();
   const text = await res.text();
   const document = parser.parseFromString(text, "application/xml");
+  const normalizedTarget = path.replace(/\/$/, "");
+
   const items: FileItem[] = Array.from(document.querySelectorAll("response"))
-    .filter(
-      (response) =>
-        decodeURIComponent(
-          response.querySelector("href")?.textContent ?? ""
-        ).slice(WEBDAV_ENDPOINT.length) !== path.replace(/\/$/, "")
-    )
+    .filter((response) => {
+      const href = response.querySelector("href")?.textContent ?? "";
+      return (
+        decodeURIComponent(href)
+          .slice(WEBDAV_ENDPOINT.length)
+          .replace(/\/$/, "") !== normalizedTarget
+      );
+    })
     .map((response) => {
       const href = response.querySelector("href")?.textContent;
       if (!href) throw new Error("Invalid response");
@@ -37,7 +47,7 @@ export async function fetchPath(path: string) {
         "thumbnail"
       )[0]?.textContent;
       return {
-        key: decodeURI(href).replace(/^\/webdav\//, ""),
+        key: decodeURIComponent(href).replace(/^\/webdav\//, ""),
         size: size ? Number(size) : 0,
         uploaded: lastModified!,
         httpMetadata: { contentType: contentType! },
@@ -53,27 +63,26 @@ export async function generateThumbnail(file: File) {
   const canvas = document.createElement("canvas");
   canvas.width = THUMBNAIL_SIZE;
   canvas.height = THUMBNAIL_SIZE;
-  var ctx = canvas.getContext("2d")!;
+  const ctx = canvas.getContext("2d")!;
 
   if (file.type.startsWith("image/")) {
     const image = await new Promise<HTMLImageElement>((resolve) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.src = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.src = URL.createObjectURL(file);
     });
     ctx.drawImage(image, 0, 0, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
   } else if (file.type === "video/mp4") {
-    // Generate thumbnail from video
     const video = await new Promise<HTMLVideoElement>(
       async (resolve, reject) => {
-        const video = document.createElement("video");
-        video.muted = true;
-        video.src = URL.createObjectURL(file);
+        const vid = document.createElement("video");
+        vid.muted = true;
+        vid.src = URL.createObjectURL(file);
         setTimeout(() => reject(new Error("Video load timeout")), 2000);
-        await video.play();
-        video.pause();
-        video.currentTime = 0;
-        resolve(video);
+        await vid.play();
+        vid.pause();
+        vid.currentTime = 0;
+        resolve(vid);
       }
     );
     ctx.drawImage(video, 0, 0, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
@@ -87,7 +96,7 @@ export async function generateThumbnail(file: File) {
     const pdf = await pdfjsLib.getDocument(URL.createObjectURL(file)).promise;
     const page = await pdf.getPage(1);
     const { width, height } = page.getViewport({ scale: 1 });
-    var scale = THUMBNAIL_SIZE / Math.max(width, height);
+    const scale = THUMBNAIL_SIZE / Math.max(width, height);
     const viewport = page.getViewport({ scale });
     const renderContext = { canvasContext: ctx, viewport };
     await page.render(renderContext).promise;
@@ -125,18 +134,26 @@ function xhrFetch(
       url instanceof Request ? url.url : url
     );
     const headers = new Headers(requestInit.headers);
+    headers.set("X-Requested-With", "SunflowerDrive");
     headers.forEach((value, key) => xhr.setRequestHeader(key, value));
     xhr.onload = () => {
-      const headers = xhr
+      const responseHeaders = xhr
         .getAllResponseHeaders()
         .trim()
         .split("\r\n")
         .reduce((acc, header) => {
-          const [key, value] = header.split(": ");
-          acc[key] = value;
+          const idx = header.indexOf(": ");
+          if (idx > 0) {
+            acc[header.slice(0, idx)] = header.slice(idx + 2);
+          }
           return acc;
         }, {} as Record<string, string>);
-      resolve(new Response(xhr.responseText, { status: xhr.status, headers }));
+      resolve(
+        new Response(xhr.responseText, {
+          status: xhr.status,
+          headers: responseHeaders,
+        })
+      );
     };
     xhr.onerror = reject;
     if (
@@ -159,13 +176,20 @@ export async function multipartUpload(
     }) => void;
   }
 ) {
-  const headers = options?.headers || {};
-  headers["content-type"] = file.type;
+  const headers: Record<string, string> = {
+    ...SPA_REQUEST_HEADERS,
+    ...(options?.headers || {}),
+    "content-type": file.type || "application/octet-stream",
+  };
 
   const uploadResponse = await fetch(`/webdav/${encodeKey(key)}?uploads`, {
     headers,
     method: "POST",
   });
+  if (uploadResponse.status === 401) throw new AuthRequiredError();
+  if (!uploadResponse.ok) {
+    throw new Error(`初始化分片上传失败 (${uploadResponse.status})`);
+  }
   const { uploadId } = await uploadResponse.json<{ uploadId: string }>();
   const totalChunks = Math.ceil(file.size / SIZE_LIMIT);
 
@@ -206,6 +230,9 @@ export async function multipartUpload(
           })
           .catch(uploadPart);
       const response = await [1, 2].reduce(retryReducer, uploadPart());
+      if (!response.ok) {
+        throw new Error(`分片 ${i} 上传失败 (${response.status})`);
+      }
       return { partNumber: i, etag: response.headers.get("etag")! };
     })
   );
@@ -213,8 +240,10 @@ export async function multipartUpload(
   const completeParams = new URLSearchParams({ uploadId });
   const response = await fetch(`/webdav/${encodeKey(key)}?${completeParams}`, {
     method: "POST",
+    headers: SPA_REQUEST_HEADERS,
     body: JSON.stringify({ parts: uploadedParts }),
   });
+  if (response.status === 401) throw new AuthRequiredError();
   if (!response.ok) throw new Error(await response.text());
   return response;
 }
@@ -227,9 +256,15 @@ export async function copyPaste(source: string, target: string, move = false) {
   );
   const res = await fetch(uploadUrl, {
     method: move ? "MOVE" : "COPY",
-    headers: { Destination: destinationUrl.href },
+    headers: {
+      Destination: destinationUrl.href,
+      ...SPA_REQUEST_HEADERS,
+    },
   });
-  if (!res.ok) throw new Error(`Failed to ${move ? "rename/move" : "copy"}`);
+  if (res.status === 401) throw new AuthRequiredError();
+  if (!res.ok) {
+    throw new Error(`${move ? "移动/重命名" : "复制"}失败 (${res.status})`);
+  }
 }
 
 export async function createFolder(cwd: string, providedName?: string) {
@@ -242,7 +277,11 @@ export async function createFolder(cwd: string, providedName?: string) {
   }
   const folderKey = `${cwd}${folderName}`;
   const uploadUrl = `${WEBDAV_ENDPOINT}${encodeKey(folderKey)}`;
-  const res = await fetch(uploadUrl, { method: "MKCOL" });
+  const res = await fetch(uploadUrl, {
+    method: "MKCOL",
+    headers: SPA_REQUEST_HEADERS,
+  });
+  if (res.status === 401) throw new AuthRequiredError();
   if (!res.ok) {
     throw new Error(`创建文件夹失败 (${res.status})`);
   }
@@ -271,21 +310,26 @@ export async function processTransferTask({
 
       const thumbnailUploadUrl = `/webdav/_$flaredrive$/thumbnails/${digestHex}.png`;
       try {
-        await fetch(thumbnailUploadUrl, {
+        const thumbRes = await fetch(thumbnailUploadUrl, {
           method: "PUT",
+          headers: SPA_REQUEST_HEADERS,
           body: thumbnailBlob,
         });
-        thumbnailDigest = digestHex;
-      } catch (error) {
+        if (thumbRes.ok) {
+          thumbnailDigest = digestHex;
+        }
+      } catch {
         console.log(`Upload ${digestHex}.png failed`);
       }
-    } catch (error) {
-      console.log(`Generate thumbnail failed`);
+    } catch {
+      console.log("Generate thumbnail failed");
     }
   }
 
-  const headers: { "fd-thumbnail"?: string } = {};
+  const headers: Record<string, string> = {};
   if (thumbnailDigest) headers["fd-thumbnail"] = thumbnailDigest;
+  if (file.type) headers["Content-Type"] = file.type;
+
   if (file.size >= SIZE_LIMIT) {
     return await multipartUpload(remoteKey, file, {
       headers,
@@ -293,11 +337,14 @@ export async function processTransferTask({
     });
   } else {
     const uploadUrl = `${WEBDAV_ENDPOINT}${encodeKey(remoteKey)}`;
-    return await xhrFetch(uploadUrl, {
+    const res = await xhrFetch(uploadUrl, {
       method: "PUT",
       headers,
       body: file,
       onUploadProgress: onTaskProgress,
     });
+    if (res.status === 401) throw new AuthRequiredError("上传失败：请先登录管理员账号");
+    if (!res.ok) throw new Error(`上传失败 (${res.status})`);
+    return res;
   }
 }

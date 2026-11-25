@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Box,
+  CircularProgress,
   CssBaseline,
   GlobalStyles,
   PaletteMode,
@@ -12,8 +13,11 @@ import {
 import { ThemeProvider } from "@mui/material/styles";
 
 import Header from "./Header";
+import LoginDialog from "./LoginDialog";
 import Main from "./Main";
 import ProgressDialog from "./ProgressDialog";
+import StorageStatsDialog from "./StorageStatsDialog";
+import { AuthStatus, fetchAuthStatus, logoutAdmin } from "./app/api";
 import { TransferQueueProvider } from "./app/transferQueue";
 import { createSunflowerTheme } from "./theme";
 
@@ -53,9 +57,21 @@ function App() {
   const [colorMode, setColorMode] = useState<PaletteMode>(getInitialColorMode);
   const [search, setSearch] = useState("");
   const [showProgressDialog, setShowProgressDialog] = useState(false);
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
+  const [showStatsDialog, setShowStatsDialog] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
   const [resetRootToken, setResetRootToken] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>({
+    authenticated: false,
+    username: null,
+    publicRead: true,
+    authConfigured: true,
+    privateDirs: [],
+  });
+
   const [toast, setToast] = useState<ToastState>({
     open: false,
     message: "",
@@ -78,6 +94,20 @@ function App() {
       );
     }
   }, [colorMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchAuthStatus()
+      .then((status) => {
+        if (!cancelled) setAuthStatus(status);
+      })
+      .finally(() => {
+        if (!cancelled) setAuthLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleToggleColorMode = useCallback(() => {
     setColorMode((prev) => (prev === "light" ? "dark" : "light"));
@@ -102,45 +132,120 @@ function App() {
     setRefreshToken((v) => v + 1);
   }, []);
 
+  const handleLoginSuccess = useCallback(
+    ({ username, privateDirs }: { username: string; privateDirs: string[] }) => {
+      setAuthStatus((prev) => ({
+        ...prev,
+        authenticated: true,
+        username,
+        privateDirs,
+      }));
+      setShowLoginDialog(false);
+      setRefreshToken((v) => v + 1);
+      handleNotify(`欢迎回来，${username}`, "success");
+    },
+    [handleNotify]
+  );
+
+  const handleLogout = useCallback(async () => {
+    await logoutAdmin();
+    setAuthStatus((prev) => ({
+      ...prev,
+      authenticated: false,
+      username: null,
+      privateDirs: [],
+    }));
+    setResetRootToken((v) => v + 1);
+    setRefreshToken((v) => v + 1);
+    handleNotify("已安全退出登录", "info");
+  }, [handleNotify]);
+
+  const handlePrivateDirsChange = useCallback((privateDirs: string[]) => {
+    setAuthStatus((prev) => ({ ...prev, privateDirs }));
+  }, []);
+
+  const requireFullPageLogin =
+    !authLoading && !authStatus.publicRead && !authStatus.authenticated;
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       {globalStyles}
       <TransferQueueProvider>
-        <Stack sx={{ minHeight: "100%" }}>
-          <Header
-            search={search}
-            onSearchChange={setSearch}
-            onLogoClick={handleLogoClick}
-            onRefresh={handleRefresh}
-            refreshing={refreshing}
-            colorMode={colorMode}
-            onToggleColorMode={handleToggleColorMode}
-            setShowProgressDialog={setShowProgressDialog}
-          />
-          <Main
-            search={search}
-            onClearSearch={() => setSearch("")}
-            refreshToken={refreshToken}
-            resetRootToken={resetRootToken}
-            onRefreshingChange={setRefreshing}
-            onNotify={handleNotify}
-          />
-          <Box
-            component="footer"
-            sx={{
-              py: 2.5,
-              px: 2,
-              textAlign: "center",
-              borderTop: "1px solid",
-              borderColor: "divider",
-            }}
+        {authLoading ? (
+          <Stack
+            alignItems="center"
+            justifyContent="center"
+            spacing={2}
+            sx={{ minHeight: "100vh" }}
           >
-            <Typography variant="caption" color="text.secondary">
-              Sunflower Drive · Powered by Cloudflare R2 &amp; WebDAV
+            <CircularProgress size={34} />
+            <Typography variant="body2" color="text.secondary">
+              正在检查登录状态…
             </Typography>
-          </Box>
-        </Stack>
+          </Stack>
+        ) : requireFullPageLogin ? (
+          <LoginDialog open fullPage onSuccess={handleLoginSuccess} />
+        ) : (
+          <Stack sx={{ minHeight: "100%" }}>
+            <Header
+              search={search}
+              onSearchChange={setSearch}
+              onLogoClick={handleLogoClick}
+              onRefresh={handleRefresh}
+              refreshing={refreshing}
+              colorMode={colorMode}
+              onToggleColorMode={handleToggleColorMode}
+              setShowProgressDialog={setShowProgressDialog}
+              onOpenStats={() => setShowStatsDialog(true)}
+              authenticated={authStatus.authenticated}
+              username={authStatus.username}
+              onOpenLogin={() => setShowLoginDialog(true)}
+              onLogout={handleLogout}
+            />
+            <Main
+              search={search}
+              onClearSearch={() => setSearch("")}
+              refreshToken={refreshToken}
+              resetRootToken={resetRootToken}
+              authStatus={authStatus}
+              onRequireLogin={() => setShowLoginDialog(true)}
+              onPrivateDirsChange={handlePrivateDirsChange}
+              onRefreshingChange={setRefreshing}
+              onNotify={handleNotify}
+            />
+            <Box
+              component="footer"
+              sx={{
+                py: 2.5,
+                px: 2,
+                textAlign: "center",
+                borderTop: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Typography variant="caption" color="text.secondary">
+                Sunflower Drive · Powered by Cloudflare R2 &amp; WebDAV
+              </Typography>
+            </Box>
+          </Stack>
+        )}
+
+        <LoginDialog
+          open={showLoginDialog}
+          onClose={() => setShowLoginDialog(false)}
+          onSuccess={handleLoginSuccess}
+        />
+
+        <StorageStatsDialog
+          open={showStatsDialog}
+          onClose={() => setShowStatsDialog(false)}
+        />
+
+        <ProgressDialog
+          open={showProgressDialog}
+          onClose={() => setShowProgressDialog(false)}
+        />
 
         <Snackbar
           autoHideDuration={3600}
@@ -157,11 +262,6 @@ function App() {
             {toast.message}
           </Alert>
         </Snackbar>
-
-        <ProgressDialog
-          open={showProgressDialog}
-          onClose={() => setShowProgressDialog(false)}
-        />
       </TransferQueueProvider>
     </ThemeProvider>
   );

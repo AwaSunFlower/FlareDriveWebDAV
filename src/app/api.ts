@@ -1,0 +1,174 @@
+export const SPA_REQUEST_HEADERS: Record<string, string> = {
+  "X-Requested-With": "SunflowerDrive",
+};
+
+export interface AuthStatus {
+  authenticated: boolean;
+  username: string | null;
+  publicRead: boolean;
+  authConfigured: boolean;
+  privateDirs: string[];
+}
+
+export interface StorageStats {
+  totalFiles: number;
+  totalFolders: number;
+  totalSize: number;
+  quotaBytes: number;
+  includesPrivate: boolean;
+  categories: {
+    image: { count: number; size: number };
+    video: { count: number; size: number };
+    audio: { count: number; size: number };
+    archive: { count: number; size: number };
+    document: { count: number; size: number };
+    code: { count: number; size: number };
+    other: { count: number; size: number };
+  };
+}
+
+export class AuthRequiredError extends Error {
+  status = 401;
+  constructor(message = "需要管理员登录认证") {
+    super(message);
+    this.name = "AuthRequiredError";
+  }
+}
+
+export async function fetchAuthStatus(): Promise<AuthStatus> {
+  const res = await fetch("/api/auth/status", {
+    headers: SPA_REQUEST_HEADERS,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    // Graceful fallback if API route is unavailable
+    return {
+      authenticated: false,
+      username: null,
+      publicRead: true,
+      authConfigured: true,
+      privateDirs: [],
+    };
+  }
+  return (await res.json()) as AuthStatus;
+}
+
+export async function loginAdmin(
+  username: string,
+  password: string,
+  remember: boolean
+): Promise<{
+  ok: true;
+  username: string;
+  expiresAt: number;
+  privateDirs: string[];
+}> {
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...SPA_REQUEST_HEADERS,
+    },
+    body: JSON.stringify({ username, password, remember }),
+  });
+
+  const data = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    username?: string;
+    expiresAt?: number;
+    privateDirs?: string[];
+    error?: string;
+  };
+
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || `登录失败 (${res.status})`);
+  }
+
+  return {
+    ok: true,
+    username: data.username || username,
+    expiresAt: data.expiresAt || Date.now(),
+    privateDirs: Array.isArray(data.privateDirs) ? data.privateDirs : [],
+  };
+}
+
+export async function logoutAdmin(): Promise<void> {
+  await fetch("/api/auth/logout", {
+    method: "POST",
+    headers: SPA_REQUEST_HEADERS,
+  });
+}
+
+export async function createSignedShare(
+  key: string,
+  expiresInSeconds: number,
+  download: boolean
+): Promise<{ url: string; expiresAt: number; key: string }> {
+  const res = await fetch("/api/share", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...SPA_REQUEST_HEADERS,
+    },
+    body: JSON.stringify({ key, expiresInSeconds, download }),
+  });
+
+  if (res.status === 401) throw new AuthRequiredError();
+  const data = (await res.json().catch(() => ({}))) as {
+    url?: string;
+    expiresAt?: number;
+    key?: string;
+    error?: string;
+  };
+  if (!res.ok || !data.url) {
+    throw new Error(data.error || `生成分享链接失败 (${res.status})`);
+  }
+  return {
+    url: data.url,
+    expiresAt: data.expiresAt || Date.now() + expiresInSeconds * 1000,
+    key: data.key || key,
+  };
+}
+
+export async function setFolderPrivacy(
+  path: string,
+  isPrivate: boolean
+): Promise<{ ok: true; isPrivate: boolean; privateDirs: string[] }> {
+  const res = await fetch("/api/privacy", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...SPA_REQUEST_HEADERS,
+    },
+    body: JSON.stringify({ path, isPrivate }),
+  });
+
+  if (res.status === 401) throw new AuthRequiredError();
+  const data = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    isPrivate?: boolean;
+    privateDirs?: string[];
+    error?: string;
+  };
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || `更新私密状态失败 (${res.status})`);
+  }
+  return {
+    ok: true,
+    isPrivate: Boolean(data.isPrivate),
+    privateDirs: Array.isArray(data.privateDirs) ? data.privateDirs : [],
+  };
+}
+
+export async function fetchStorageStats(): Promise<StorageStats> {
+  const res = await fetch("/api/stats", {
+    headers: SPA_REQUEST_HEADERS,
+    cache: "no-store",
+  });
+  if (res.status === 401) throw new AuthRequiredError();
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || `获取存储统计失败 (${res.status})`);
+  }
+  return (await res.json()) as StorageStats;
+}

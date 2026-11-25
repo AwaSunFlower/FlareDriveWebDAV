@@ -11,18 +11,23 @@ import {
   useTheme,
 } from "@mui/material";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import DoneAllRoundedIcon from "@mui/icons-material/DoneAllRounded";
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
+import DriveFileMoveRoundedIcon from "@mui/icons-material/DriveFileMoveRounded";
 import DriveFileRenameOutlineRoundedIcon from "@mui/icons-material/DriveFileRenameOutlineRounded";
 import ShareRoundedIcon from "@mui/icons-material/ShareRounded";
 
 interface MultiSelectToolbarProps {
   multiSelected: string[] | null;
   totalCount: number;
+  authenticated: boolean;
   onSelectAll: () => void;
   onClose: () => void;
   onDownload: () => void;
+  onMove: () => void;
+  onCopy: () => void;
   onRename: () => void;
   onDelete: () => void;
   onShare: () => void;
@@ -31,9 +36,12 @@ interface MultiSelectToolbarProps {
 function MultiSelectToolbar({
   multiSelected,
   totalCount,
+  authenticated,
   onSelectAll,
   onClose,
   onDownload,
+  onMove,
+  onCopy,
   onRename,
   onDelete,
   onShare,
@@ -41,8 +49,7 @@ function MultiSelectToolbar({
   const theme = useTheme();
   const isLight = theme.palette.mode === "light";
   const count = multiSelected?.length ?? 0;
-  const isSingleFile =
-    count === 1 && !multiSelected![0].endsWith("/");
+  const isSingleFile = count === 1 && !multiSelected![0].endsWith("/");
   const isAllSelected = totalCount > 0 && count === totalCount;
 
   return (
@@ -66,8 +73,8 @@ function MultiSelectToolbar({
             pointerEvents: "auto",
             display: "flex",
             alignItems: "center",
-            gap: { xs: 0.5, sm: 1 },
-            px: { xs: 1.5, sm: 2 },
+            gap: { xs: 0.4, sm: 0.9 },
+            px: { xs: 1.4, sm: 2 },
             py: 1,
             borderRadius: "999px",
             backgroundColor: isLight
@@ -127,7 +134,7 @@ function MultiSelectToolbar({
               </span>
             </Tooltip>
 
-            <Tooltip title="分享 / 复制直链">
+            <Tooltip title="分享 / 限时直链">
               <span>
                 <IconButton
                   size="small"
@@ -144,38 +151,70 @@ function MultiSelectToolbar({
               </span>
             </Tooltip>
 
-            <Tooltip title="重命名">
-              <span>
-                <IconButton
-                  size="small"
-                  disabled={!isSingleFile}
-                  onClick={onRename}
-                  sx={{
-                    color: "#FAF6F0",
-                    "&.Mui-disabled": { color: "rgba(255,255,255,0.28)" },
-                    "&:hover": { color: "#FBBF24" },
-                  }}
-                >
-                  <DriveFileRenameOutlineRoundedIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
+            {authenticated && (
+              <>
+                <Tooltip title="移动到文件夹">
+                  <IconButton
+                    size="small"
+                    aria-label="移动到文件夹"
+                    onClick={onMove}
+                    sx={{
+                      color: "#FAF6F0",
+                      "&:hover": { color: "#FBBF24" },
+                    }}
+                  >
+                    <DriveFileMoveRoundedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
 
-            <Tooltip title="删除">
-              <IconButton
-                size="small"
-                onClick={onDelete}
-                sx={{
-                  color: "#FCA5A5",
-                  "&:hover": {
-                    color: "#EF4444",
-                    backgroundColor: "rgba(239, 68, 68, 0.14)",
-                  },
-                }}
-              >
-                <DeleteOutlineRoundedIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
+                <Tooltip title="复制到文件夹">
+                  <IconButton
+                    size="small"
+                    aria-label="复制到文件夹"
+                    onClick={onCopy}
+                    sx={{
+                      color: "#FAF6F0",
+                      "&:hover": { color: "#FBBF24" },
+                    }}
+                  >
+                    <ContentCopyRoundedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+
+                <Tooltip title="重命名">
+                  <span>
+                    <IconButton
+                      size="small"
+                      disabled={count !== 1}
+                      onClick={onRename}
+                      sx={{
+                        color: "#FAF6F0",
+                        "&.Mui-disabled": { color: "rgba(255,255,255,0.28)" },
+                        "&:hover": { color: "#FBBF24" },
+                      }}
+                    >
+                      <DriveFileRenameOutlineRoundedIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+
+                <Tooltip title="删除">
+                  <IconButton
+                    size="small"
+                    onClick={onDelete}
+                    sx={{
+                      color: "#FCA5A5",
+                      "&:hover": {
+                        color: "#EF4444",
+                        backgroundColor: "rgba(239, 68, 68, 0.14)",
+                      },
+                    }}
+                  >
+                    <DeleteOutlineRoundedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </>
+            )}
           </Stack>
 
           <Divider

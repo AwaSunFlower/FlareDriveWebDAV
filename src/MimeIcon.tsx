@@ -133,6 +133,19 @@ export function isImageFile(contentType?: string, filename?: string): boolean {
   return getFileCategory(contentType, filename) === "image";
 }
 
+export function isPreviewableMedia(
+  contentType?: string,
+  filename?: string
+): boolean {
+  const category = getFileCategory(contentType, filename);
+  return (
+    category === "image" ||
+    category === "video" ||
+    category === "audio" ||
+    category === "pdf"
+  );
+}
+
 const EDITABLE_TEXT_EXTS = new Set([
   "txt",
   "md",
