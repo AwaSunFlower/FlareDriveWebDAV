@@ -1004,11 +1004,20 @@ const TextPadDrawer: React.FC<TextPadDrawerProps> = ({
               }
               sx={{ px: 2 }}
             >
-              {saving
-                ? "保存中…"
-                : authenticated
-                ? "保存并上传 (Ctrl+S)"
-                : "登录以保存"}
+              {saving ? (
+                "保存中…"
+              ) : authenticated ? (
+                <>
+                  <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
+                    保存并上传 (Ctrl+S)
+                  </Box>
+                  <Box component="span" sx={{ display: { xs: "inline", sm: "none" } }}>
+                    保存上传
+                  </Box>
+                </>
+              ) : (
+                "登录以保存"
+              )}
             </Button>
           </Stack>
         </Stack>

@@ -91,12 +91,12 @@ const StorageStatsDialog: React.FC<StorageStatsDialogProps> = ({
             >
               <CloudQueueRoundedIcon fontSize="small" />
             </Box>
-            <Box>
+            <Box sx={{ minWidth: 0 }}>
               <Typography variant="h6" sx={{ fontSize: "1.02rem" }}>
                 R2 存储空间统计
               </Typography>
-              <Typography variant="caption" color="text.secondary">
-                对照 Cloudflare R2 免费 10 GB 存储额度
+              <Typography variant="caption" color="text.secondary" noWrap display="block">
+                Cloudflare R2 免费 10 GB 额度
               </Typography>
             </Box>
           </Stack>

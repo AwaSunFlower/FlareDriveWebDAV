@@ -57,7 +57,7 @@ export function isPathInPrivateDirs(key: string, privateDirs: string[]) {
   );
 }
 
-function formatDateTime(value?: string) {
+function formatDateTime(value?: string, compact = false) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
@@ -66,7 +66,7 @@ function formatDateTime(value?: string) {
   const d = String(date.getDate()).padStart(2, "0");
   const hh = String(date.getHours()).padStart(2, "0");
   const mm = String(date.getMinutes()).padStart(2, "0");
-  return `${y}/${m}/${d} ${hh}:${mm}`;
+  return compact ? `${m}/${d} ${hh}:${mm}` : `${y}/${m}/${d} ${hh}:${mm}`;
 }
 
 const BLUR_PALETTES = [
@@ -140,8 +140,8 @@ function BlurredImageBanner({
       sx={{
         position: "relative",
         width: "100%",
-        height: 82,
-        borderRadius: "13px",
+        height: { xs: 62, sm: 82 },
+        borderRadius: { xs: "11px", sm: "13px" },
         overflow: "hidden",
         border: "1px solid",
         borderColor: "divider",
@@ -174,20 +174,25 @@ function BlurredImageBanner({
         <Stack
           direction="row"
           alignItems="center"
-          spacing={0.6}
+          spacing={0.5}
           sx={{
-            px: 1.25,
-            py: 0.4,
+            px: { xs: 0.9, sm: 1.25 },
+            py: 0.35,
             borderRadius: "999px",
             backgroundColor: "rgba(24, 21, 18, 0.56)",
             color: "#FEF3C7",
             backdropFilter: "blur(8px)",
           }}
         >
-          <BlurOnRoundedIcon sx={{ fontSize: 15 }} />
+          <BlurOnRoundedIcon sx={{ fontSize: { xs: 13, sm: 15 } }} />
           <Typography
             variant="caption"
-            sx={{ fontWeight: 700, fontSize: "0.7rem", color: "#FEF3C7" }}
+            noWrap
+            sx={{
+              fontWeight: 700,
+              fontSize: { xs: "0.64rem", sm: "0.7rem" },
+              color: "#FEF3C7",
+            }}
           >
             图片已模糊加密
           </Typography>
@@ -730,9 +735,9 @@ function FileGrid({
     );
   }
 
-  // Grid Card View
+  // Grid Card View — 2-column Bento layout on mobile (xs=6) for crisp proportions
   return (
-    <Grid container spacing={2} sx={{ pb: 5 }}>
+    <Grid container spacing={{ xs: 1.25, sm: 2 }} sx={{ pb: { xs: 10, sm: 5 } }}>
       {files.map((file) => {
         const filename = extractFilename(file.key);
         const dir = isDirectory(file);
@@ -752,7 +757,7 @@ function FileGrid({
         );
 
         return (
-          <Grid item key={file.key} xs={12} sm={6} md={4} lg={3}>
+          <Grid item key={file.key} xs={6} sm={6} md={4} lg={3}>
             <Paper
               elevation={0}
               onClick={() => handleOpenItem(file)}
@@ -762,15 +767,16 @@ function FileGrid({
               }}
               sx={{
                 position: "relative",
-                p: 2,
+                p: { xs: 1.35, sm: 2 },
                 height: "100%",
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "space-between",
-                gap: 1.5,
-                borderRadius: "18px",
+                gap: { xs: 1, sm: 1.5 },
+                borderRadius: { xs: "15px", sm: "18px" },
                 cursor: lockedFile ? "not-allowed" : "pointer",
                 userSelect: "none",
+                minWidth: 0,
                 backgroundColor: selected
                   ? isLight
                     ? "#FFFBEB"
@@ -823,15 +829,25 @@ function FileGrid({
                   direction="row"
                   alignItems="flex-start"
                   justifyContent="space-between"
-                  spacing={1}
+                  spacing={0.5}
                 >
-                  <Stack direction="row" alignItems="center" spacing={1}>
-                    {renderIcon(file, "medium", lockedFile)}
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.75}
+                    sx={{ minWidth: 0 }}
+                  >
+                    <Box sx={{ display: { xs: "none", sm: "block" } }}>
+                      {renderIcon(file, "medium", lockedFile)}
+                    </Box>
+                    <Box sx={{ display: { xs: "block", sm: "none" } }}>
+                      {renderIcon(file, "small", lockedFile)}
+                    </Box>
                     {isExactPrivateDir && (
                       <Chip
                         icon={
                           <LockRoundedIcon
-                            sx={{ fontSize: "13px !important" }}
+                            sx={{ fontSize: "12px !important" }}
                           />
                         }
                         label="私密"
@@ -839,6 +855,7 @@ function FileGrid({
                         color="primary"
                         variant="outlined"
                         sx={{
+                          display: { xs: "none", sm: "inline-flex" },
                           height: 22,
                           fontSize: "0.7rem",
                           fontWeight: 700,
@@ -849,19 +866,20 @@ function FileGrid({
                       <Chip
                         icon={
                           <LockRoundedIcon
-                            sx={{ fontSize: "12px !important" }}
+                            sx={{ fontSize: "11px !important" }}
                           />
                         }
                         label="已加密"
                         size="small"
                         sx={{
-                          height: 22,
-                          fontSize: "0.69rem",
+                          height: { xs: 20, sm: 22 },
+                          fontSize: { xs: "0.64rem", sm: "0.69rem" },
                           fontWeight: 700,
                           backgroundColor: isLight
                             ? "rgba(120, 113, 108, 0.12)"
                             : "rgba(255, 255, 255, 0.08)",
                           color: "text.secondary",
+                          "& .MuiChip-label": { px: { xs: 0.65, sm: 0.9 } },
                         }}
                       />
                     )}
@@ -870,14 +888,15 @@ function FileGrid({
                   {!lockedFile && (
                     <Stack
                       direction="row"
-                      spacing={0.25}
+                      spacing={{ xs: 0, sm: 0.25 }}
                       className="sf-card-actions"
                       sx={{
                         opacity:
                           selected || multiSelected !== null
                             ? 1
-                            : { xs: 0.78, sm: 0 },
+                            : { xs: 0.85, sm: 0 },
                         transition: "opacity 0.18s ease",
+                        flexShrink: 0,
                       }}
                     >
                       {dir && authenticated && (
@@ -891,12 +910,14 @@ function FileGrid({
                                 onOpenShare(file);
                               }}
                               sx={{
-                                p: 0.5,
+                                p: { xs: 0.35, sm: 0.5 },
                                 color: "text.secondary",
                                 "&:hover": { color: "primary.main" },
                               }}
                             >
-                              <ShareRoundedIcon sx={{ fontSize: 17 }} />
+                              <ShareRoundedIcon
+                                sx={{ fontSize: { xs: 15, sm: 17 } }}
+                              />
                             </IconButton>
                           </Tooltip>
                           <Tooltip
@@ -916,7 +937,7 @@ function FileGrid({
                                 onTogglePrivacy(cleanKey, !isExactPrivateDir);
                               }}
                               sx={{
-                                p: 0.5,
+                                p: { xs: 0.35, sm: 0.5 },
                                 color: isExactPrivateDir
                                   ? "primary.main"
                                   : "text.secondary",
@@ -924,9 +945,13 @@ function FileGrid({
                               }}
                             >
                               {isExactPrivateDir ? (
-                                <LockRoundedIcon sx={{ fontSize: 17 }} />
+                                <LockRoundedIcon
+                                  sx={{ fontSize: { xs: 15, sm: 17 } }}
+                                />
                               ) : (
-                                <LockOpenRoundedIcon sx={{ fontSize: 17 }} />
+                                <LockOpenRoundedIcon
+                                  sx={{ fontSize: { xs: 15, sm: 17 } }}
+                                />
                               )}
                             </IconButton>
                           </Tooltip>
@@ -948,12 +973,14 @@ function FileGrid({
                               onEditTextFile(file);
                             }}
                             sx={{
-                              p: 0.5,
+                              p: { xs: 0.35, sm: 0.5 },
                               color: "text.secondary",
                               "&:hover": { color: "primary.main" },
                             }}
                           >
-                            <EditNoteRoundedIcon sx={{ fontSize: 19 }} />
+                            <EditNoteRoundedIcon
+                              sx={{ fontSize: { xs: 17, sm: 19 } }}
+                            />
                           </IconButton>
                         </Tooltip>
                       )}
@@ -967,12 +994,14 @@ function FileGrid({
                               onOpenShare(file);
                             }}
                             sx={{
-                              p: 0.5,
+                              p: { xs: 0.35, sm: 0.5 },
                               color: "text.secondary",
                               "&:hover": { color: "primary.main" },
                             }}
                           >
-                            <ShareRoundedIcon sx={{ fontSize: 17 }} />
+                            <ShareRoundedIcon
+                              sx={{ fontSize: { xs: 15, sm: 17 } }}
+                            />
                           </IconButton>
                         </Tooltip>
                       )}
@@ -986,7 +1015,7 @@ function FileGrid({
                               onMultiSelect(file.key);
                             }}
                             sx={{
-                              p: 0.5,
+                              p: { xs: 0.35, sm: 0.5 },
                               color: selected
                                 ? "primary.main"
                                 : "text.secondary",
@@ -994,10 +1023,12 @@ function FileGrid({
                             }}
                           >
                             {selected ? (
-                              <CheckCircleRoundedIcon sx={{ fontSize: 19 }} />
+                              <CheckCircleRoundedIcon
+                                sx={{ fontSize: { xs: 17, sm: 19 } }}
+                              />
                             ) : (
                               <RadioButtonUncheckedRoundedIcon
-                                sx={{ fontSize: 19 }}
+                                sx={{ fontSize: { xs: 17, sm: 19 } }}
                               />
                             )}
                           </IconButton>
@@ -1010,20 +1041,32 @@ function FileGrid({
 
               {/* Middle: Filename */}
               <Box sx={{ minWidth: 0 }}>
-                <Tooltip title={filename} enterDelay={500}>
-                  <Typography
-                    variant="subtitle2"
-                    noWrap
-                    sx={{
-                      fontSize: "0.95rem",
-                      fontWeight: 600,
-                      color: lockedFile ? "text.secondary" : "text.primary",
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {filename}
-                  </Typography>
-                </Tooltip>
+                <Stack direction="row" alignItems="center" spacing={0.5}>
+                  <Tooltip title={filename} enterDelay={500}>
+                    <Typography
+                      variant="subtitle2"
+                      noWrap
+                      sx={{
+                        fontSize: { xs: "0.84rem", sm: "0.95rem" },
+                        fontWeight: 600,
+                        color: lockedFile ? "text.secondary" : "text.primary",
+                        lineHeight: 1.38,
+                      }}
+                    >
+                      {filename}
+                    </Typography>
+                  </Tooltip>
+                  {isExactPrivateDir && (
+                    <LockRoundedIcon
+                      sx={{
+                        display: { xs: "inline-flex", sm: "none" },
+                        fontSize: 13,
+                        color: "primary.main",
+                        flexShrink: 0,
+                      }}
+                    />
+                  )}
+                </Stack>
               </Box>
 
               {/* Bottom Meta Row */}
@@ -1031,9 +1074,9 @@ function FileGrid({
                 direction="row"
                 alignItems="center"
                 justifyContent="space-between"
-                spacing={1}
+                spacing={0.5}
                 sx={{
-                  pt: 1.15,
+                  pt: { xs: 0.85, sm: 1.15 },
                   borderTop: "1px dashed",
                   borderColor: "divider",
                 }}
@@ -1041,17 +1084,17 @@ function FileGrid({
                 <Stack
                   direction="row"
                   alignItems="center"
-                  spacing={0.85}
+                  spacing={{ xs: 0.55, sm: 0.85 }}
                   sx={{ minWidth: 0 }}
                 >
                   <Chip
                     label={badgeLabel}
                     size="small"
                     sx={{
-                      height: 20,
-                      fontSize: "0.67rem",
+                      height: { xs: 18, sm: 20 },
+                      fontSize: { xs: "0.62rem", sm: "0.67rem" },
                       fontWeight: 700,
-                      borderRadius: "7px",
+                      borderRadius: "6px",
                       backgroundColor: dir
                         ? isLight
                           ? "rgba(251, 191, 36, 0.18)"
@@ -1064,7 +1107,7 @@ function FileGrid({
                           ? "#B45309"
                           : "#FCD34D"
                         : "text.secondary",
-                      "& .MuiChip-label": { px: 0.8 },
+                      "& .MuiChip-label": { px: { xs: 0.65, sm: 0.8 } },
                     }}
                   />
                   <Typography
@@ -1072,21 +1115,37 @@ function FileGrid({
                     noWrap
                     color="text.secondary"
                     sx={{
+                      display: { xs: "none", sm: "block" },
                       fontSize: "0.73rem",
                       fontVariantNumeric: "tabular-nums",
                     }}
                   >
                     {formatDateTime(file.uploaded)}
                   </Typography>
+                  {dir && (
+                    <Typography
+                      variant="caption"
+                      noWrap
+                      color="text.secondary"
+                      sx={{
+                        display: { xs: "block", sm: "none" },
+                        fontSize: "0.67rem",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {formatDateTime(file.uploaded, true)}
+                    </Typography>
+                  )}
                 </Stack>
 
                 {!dir && (
                   <Typography
                     variant="caption"
                     color="text.secondary"
+                    noWrap
                     sx={{
                       flexShrink: 0,
-                      fontSize: "0.73rem",
+                      fontSize: { xs: "0.67rem", sm: "0.73rem" },
                       fontWeight: 600,
                       fontVariantNumeric: "tabular-nums",
                     }}

@@ -104,8 +104,8 @@ function Header({
         alignItems: "center",
         width: "100%",
         maxWidth: { xs: "100%", md: 420 },
-        px: 1.75,
-        py: 0.65,
+        px: { xs: 1.5, sm: 1.75 },
+        py: { xs: 0.45, sm: 0.65 },
         borderRadius: "999px",
         backgroundColor: isLight
           ? "rgba(255, 255, 255, 0.9)"
@@ -128,9 +128,9 @@ function Header({
     >
       <SearchRoundedIcon
         sx={{
-          fontSize: 20,
+          fontSize: 19,
           color: "text.secondary",
-          mr: 1,
+          mr: 0.9,
           flexShrink: 0,
         }}
       />
@@ -143,7 +143,7 @@ function Header({
         onChange={(e) => onSearchChange(e.target.value)}
         inputProps={{ "aria-label": "搜索文件" }}
         sx={{
-          fontSize: "0.9rem",
+          fontSize: { xs: "0.86rem", sm: "0.9rem" },
           color: "text.primary",
           "& input::placeholder": {
             opacity: 0.72,
@@ -188,7 +188,9 @@ function Header({
   );
 
   const iconBtnSx = {
-    borderRadius: "12px",
+    width: { xs: 34, sm: 38 },
+    height: { xs: 34, sm: 38 },
+    borderRadius: { xs: "10px", sm: "12px" },
     border: "1px solid",
     borderColor: "divider",
     backgroundColor: isLight
@@ -207,9 +209,10 @@ function Header({
         position: "sticky",
         top: 0,
         zIndex: 1100,
+        width: "100%",
         backgroundColor: isLight
-          ? "rgba(253, 251, 247, 0.84)"
-          : "rgba(20, 18, 16, 0.84)",
+          ? "rgba(253, 251, 247, 0.86)"
+          : "rgba(20, 18, 16, 0.86)",
         backdropFilter: "blur(18px)",
         WebkitBackdropFilter: "blur(18px)",
         borderBottom: "1px solid",
@@ -220,21 +223,22 @@ function Header({
         sx={{
           maxWidth: 1240,
           mx: "auto",
-          px: { xs: 2, sm: 3 },
-          py: 1.5,
+          px: { xs: 1.5, sm: 3 },
+          py: { xs: 1.1, sm: 1.5 },
         }}
       >
         <Stack
           direction="row"
           alignItems="center"
           justifyContent="space-between"
-          spacing={1.5}
+          spacing={1}
+          sx={{ minWidth: 0 }}
         >
           {/* Brand */}
           <Stack
             direction="row"
             alignItems="center"
-            spacing={1.25}
+            spacing={{ xs: 0.9, sm: 1.25 }}
             onClick={onLogoClick}
             role="button"
             tabIndex={0}
@@ -247,21 +251,30 @@ function Header({
             sx={{
               cursor: "pointer",
               userSelect: "none",
-              flexShrink: 0,
+              minWidth: 0,
+              flexShrink: 1,
               borderRadius: 2,
               py: 0.25,
-              pr: 0.5,
               transition: "opacity 0.15s ease",
               "&:hover": { opacity: 0.86 },
             }}
           >
-            <SunflowerLogo size={34} />
-            <Box>
+            <Box
+              sx={{
+                width: { xs: 28, sm: 34 },
+                height: { xs: 28, sm: 34 },
+                flexShrink: 0,
+              }}
+            >
+              <SunflowerLogo size="100%" />
+            </Box>
+            <Box sx={{ minWidth: 0 }}>
               <Stack direction="row" alignItems="center" spacing={0.85}>
                 <Typography
                   variant="h6"
+                  noWrap
                   sx={{
-                    fontSize: { xs: "1.02rem", sm: "1.14rem" },
+                    fontSize: { xs: "0.98rem", sm: "1.14rem" },
                     lineHeight: 1.2,
                     fontWeight: 700,
                     background: isLight
@@ -309,15 +322,25 @@ function Header({
             {searchBar}
           </Box>
 
-          {/* Right Controls */}
-          <Stack direction="row" alignItems="center" spacing={0.75}>
+          {/* Right Controls — compact on xs so Header NEVER overflows 360px screens */}
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={{ xs: 0.55, sm: 0.75 }}
+            sx={{ flexShrink: 0 }}
+          >
             <Tooltip title="R2 存储空间统计" disableFocusListener>
               <IconButton
                 aria-label="存储空间统计"
                 onClick={onOpenStats}
-                sx={iconBtnSx}
+                sx={{
+                  ...iconBtnSx,
+                  display: authenticated
+                    ? { xs: "none", sm: "inline-flex" }
+                    : "inline-flex",
+                }}
               >
-                <CloudQueueRoundedIcon sx={{ fontSize: 20 }} />
+                <CloudQueueRoundedIcon sx={{ fontSize: { xs: 18, sm: 20 } }} />
               </IconButton>
             </Tooltip>
 
@@ -326,7 +349,10 @@ function Header({
                 <IconButton
                   aria-label="传输队列"
                   onClick={() => setShowProgressDialog(true)}
-                  sx={iconBtnSx}
+                  sx={{
+                    ...iconBtnSx,
+                    display: { xs: "none", sm: "inline-flex" },
+                  }}
                 >
                   <Badge
                     badgeContent={activeTransfers}
@@ -350,11 +376,16 @@ function Header({
               <IconButton
                 aria-label="刷新"
                 onClick={onRefresh}
-                sx={iconBtnSx}
+                sx={{
+                  ...iconBtnSx,
+                  display: authenticated
+                    ? "inline-flex"
+                    : { xs: "none", sm: "inline-flex" },
+                }}
               >
                 <RefreshRoundedIcon
                   sx={{
-                    fontSize: 20,
+                    fontSize: { xs: 18, sm: 20 },
                     animation: refreshing
                       ? "sf-spin 0.85s linear infinite"
                       : "none",
@@ -368,7 +399,9 @@ function Header({
             </Tooltip>
 
             <Tooltip
-              title={colorMode === "light" ? "切换到深色模式" : "切换到浅色模式"}
+              title={
+                colorMode === "light" ? "切换到深色模式" : "切换到浅色模式"
+              }
               disableFocusListener
             >
               <IconButton
@@ -386,9 +419,9 @@ function Header({
                 }}
               >
                 {colorMode === "light" ? (
-                  <DarkModeRoundedIcon sx={{ fontSize: 20 }} />
+                  <DarkModeRoundedIcon sx={{ fontSize: { xs: 18, sm: 20 } }} />
                 ) : (
-                  <LightModeRoundedIcon sx={{ fontSize: 20 }} />
+                  <LightModeRoundedIcon sx={{ fontSize: { xs: 18, sm: 20 } }} />
                 )}
               </IconButton>
             </Tooltip>
@@ -396,6 +429,37 @@ function Header({
             {/* Auth Control */}
             {authenticated ? (
               <>
+                {/* Mobile Compact Admin Trigger */}
+                <Tooltip title={`管理员：${username || "管理员"}`} disableFocusListener>
+                  <IconButton
+                    aria-label="管理员菜单"
+                    onClick={(e) => setAccountMenuAnchor(e.currentTarget)}
+                    sx={{
+                      display: { xs: "inline-flex", sm: "none" },
+                      width: 34,
+                      height: 34,
+                      borderRadius: "10px",
+                      border: "1px solid",
+                      borderColor: isLight
+                        ? "rgba(101, 163, 13, 0.4)"
+                        : "rgba(163, 230, 53, 0.4)",
+                      backgroundColor: isLight
+                        ? "rgba(101, 163, 13, 0.1)"
+                        : "rgba(163, 230, 53, 0.1)",
+                      color: "secondary.main",
+                    }}
+                  >
+                    <Badge
+                      badgeContent={activeTransfers}
+                      color="primary"
+                      max={99}
+                    >
+                      <VerifiedUserRoundedIcon sx={{ fontSize: 19 }} />
+                    </Badge>
+                  </IconButton>
+                </Tooltip>
+
+                {/* Desktop Full Admin Pill */}
                 <Button
                   size="small"
                   variant="outlined"
@@ -406,6 +470,7 @@ function Header({
                   }
                   onClick={(e) => setAccountMenuAnchor(e.currentTarget)}
                   sx={{
+                    display: { xs: "none", sm: "inline-flex" },
                     px: 1.4,
                     py: 0.72,
                     borderRadius: "12px",
@@ -431,6 +496,7 @@ function Header({
                     {username || "管理员"}
                   </Box>
                 </Button>
+
                 <Menu
                   anchorEl={accountMenuAnchor}
                   open={Boolean(accountMenuAnchor)}
@@ -445,6 +511,24 @@ function Header({
                     </Typography>
                   </Box>
                   <Divider />
+                  <MenuItem
+                    onClick={() => {
+                      setAccountMenuAnchor(null);
+                      setShowProgressDialog(true);
+                    }}
+                    sx={{ display: { xs: "flex", sm: "none" } }}
+                  >
+                    <ListItemIcon>
+                      <SwapVertRoundedIcon fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={
+                        activeTransfers > 0
+                          ? `传输队列 (${activeTransfers})`
+                          : "传输队列"
+                      }
+                    />
+                  </MenuItem>
                   <MenuItem
                     onClick={() => {
                       setAccountMenuAnchor(null);
@@ -474,14 +558,18 @@ function Header({
               <Button
                 size="small"
                 variant="contained"
-                startIcon={<LoginRoundedIcon sx={{ fontSize: 17 }} />}
+                startIcon={<LoginRoundedIcon sx={{ fontSize: 16 }} />}
                 onClick={onOpenLogin}
                 sx={{
-                  px: { xs: 1.4, sm: 1.85 },
-                  py: 0.78,
-                  borderRadius: "12px",
-                  fontSize: "0.82rem",
+                  px: { xs: 1.15, sm: 1.85 },
+                  py: { xs: 0.58, sm: 0.78 },
+                  minWidth: "auto",
+                  borderRadius: { xs: "10px", sm: "12px" },
+                  fontSize: { xs: "0.78rem", sm: "0.82rem" },
                   flexShrink: 0,
+                  "& .MuiButton-startIcon": {
+                    mr: { xs: 0.4, sm: 0.75 },
+                  },
                 }}
               >
                 登录
@@ -491,7 +579,7 @@ function Header({
         </Stack>
 
         {/* Mobile Search Row */}
-        <Box sx={{ display: { xs: "block", md: "none" }, mt: 1.25 }}>
+        <Box sx={{ display: { xs: "block", md: "none" }, mt: 1 }}>
           {searchBar}
         </Box>
       </Box>

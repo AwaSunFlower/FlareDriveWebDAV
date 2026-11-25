@@ -17,7 +17,6 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
-  Fab,
   ListItemIcon,
   ListItemText,
   Menu,
@@ -798,9 +797,9 @@ function Main({
           width: "100%",
           maxWidth: 1240,
           mx: "auto",
-          px: { xs: 2, sm: 3 },
-          pt: { xs: 2, sm: 3 },
-          pb: 6,
+          px: { xs: 1.5, sm: 3 },
+          pt: { xs: 1.5, sm: 3 },
+          pb: { xs: 4, sm: 6 },
           flexGrow: 1,
           display: "flex",
           flexDirection: "column",
@@ -839,9 +838,9 @@ function Main({
         <Paper
           elevation={0}
           sx={{
-            p: { xs: 1.75, sm: 2.25 },
-            mb: 2.5,
-            borderRadius: "20px",
+            p: { xs: 1.5, sm: 2.25 },
+            mb: { xs: 1.75, sm: 2.5 },
+            borderRadius: { xs: "16px", sm: "20px" },
             border: "1px solid",
             borderColor: "divider",
             backgroundColor: isLight
@@ -857,10 +856,10 @@ function Main({
             direction={{ xs: "column", md: "row" }}
             alignItems={{ xs: "stretch", md: "center" }}
             justifyContent="space-between"
-            spacing={2}
+            spacing={{ xs: 1.25, sm: 2 }}
           >
             {/* Left: Breadcrumbs + Stats */}
-            <Stack spacing={0.85} sx={{ minWidth: 0 }}>
+            <Stack spacing={0.7} sx={{ minWidth: 0 }}>
               <PathBreadcrumb
                 path={cwd}
                 rootPrefix={shareRootPrefix}
@@ -874,7 +873,7 @@ function Main({
               <Stack
                 direction="row"
                 alignItems="center"
-                spacing={1}
+                spacing={0.85}
                 flexWrap="wrap"
                 useFlexGap
                 sx={{ pl: 0.5 }}
@@ -891,7 +890,7 @@ function Main({
                     label="访客加密模式（仅文件夹可浏览）"
                     sx={{
                       height: 20,
-                      fontSize: "0.69rem",
+                      fontSize: "0.68rem",
                       fontWeight: 700,
                       backgroundColor: isLight
                         ? "rgba(217, 119, 6, 0.12)"
@@ -922,13 +921,13 @@ function Main({
               </Stack>
             </Stack>
 
-            {/* Right: Desktop Primary Actions */}
+            {/* Right: Responsive Primary Actions (Desktop & Mobile!) */}
             <Stack
               direction="row"
               alignItems="center"
-              spacing={1}
+              spacing={{ xs: 0.75, sm: 1 }}
               sx={{
-                display: { xs: "none", sm: "flex" },
+                display: "flex",
                 flexShrink: 0,
               }}
             >
@@ -937,12 +936,22 @@ function Main({
                   <Button
                     variant="outlined"
                     color="inherit"
-                    startIcon={<CreateNewFolderRoundedIcon />}
+                    size="small"
+                    startIcon={
+                      <CreateNewFolderRoundedIcon
+                        sx={{ fontSize: { xs: 16, sm: 19 } }}
+                      />
+                    }
                     onClick={() => {
                       setNewFolderName("");
                       setFolderDialogOpen(true);
                     }}
                     sx={{
+                      flex: { xs: 1, sm: "none" },
+                      py: { xs: 0.75, sm: 0.85 },
+                      px: { xs: 1, sm: 1.75 },
+                      fontSize: { xs: "0.76rem", sm: "0.86rem" },
+                      whiteSpace: "nowrap",
                       borderColor: "divider",
                       backgroundColor: isLight
                         ? "rgba(255, 255, 255, 0.8)"
@@ -959,9 +968,19 @@ function Main({
                     <Button
                       variant="outlined"
                       color="primary"
-                      startIcon={<NoteAddRoundedIcon />}
+                      size="small"
+                      startIcon={
+                        <NoteAddRoundedIcon
+                          sx={{ fontSize: { xs: 16, sm: 19 } }}
+                        />
+                      }
                       onClick={handleOpenTextPadForNew}
                       sx={{
+                        flex: { xs: 1, sm: "none" },
+                        py: { xs: 0.75, sm: 0.85 },
+                        px: { xs: 1, sm: 1.75 },
+                        fontSize: { xs: "0.76rem", sm: "0.86rem" },
+                        whiteSpace: "nowrap",
                         backgroundColor: isLight
                           ? "rgba(251, 191, 36, 0.08)"
                           : "rgba(251, 191, 36, 0.08)",
@@ -972,20 +991,37 @@ function Main({
                   </Tooltip>
                   <Button
                     variant="contained"
-                    startIcon={<CloudUploadRoundedIcon />}
+                    size="small"
+                    startIcon={
+                      <CloudUploadRoundedIcon
+                        sx={{ fontSize: { xs: 16, sm: 19 } }}
+                      />
+                    }
                     onClick={() => setShowUploadDrawer(true)}
-                    sx={{ px: 2.25 }}
+                    sx={{
+                      flex: { xs: 1, sm: "none" },
+                      py: { xs: 0.75, sm: 0.85 },
+                      px: { xs: 1.25, sm: 2.25 },
+                      fontSize: { xs: "0.76rem", sm: "0.86rem" },
+                      whiteSpace: "nowrap",
+                    }}
                   >
-                    上传文件
+                    上传
                   </Button>
                 </>
               ) : (
                 <Button
                   variant="outlined"
                   color="primary"
+                  size="small"
+                  fullWidth
                   startIcon={<LockPersonRoundedIcon />}
                   onClick={onRequireLogin}
                   sx={{
+                    width: { xs: "100%", sm: "auto" },
+                    py: { xs: 0.75, sm: 0.85 },
+                    px: { xs: 1.5, sm: 2 },
+                    fontSize: { xs: "0.8rem", sm: "0.86rem" },
                     backgroundColor: isLight
                       ? "rgba(251, 191, 36, 0.08)"
                       : "rgba(251, 191, 36, 0.08)",
@@ -999,7 +1035,7 @@ function Main({
             </Stack>
           </Stack>
 
-          <Divider sx={{ my: 1.5 }} />
+          <Divider sx={{ my: { xs: 1.15, sm: 1.5 } }} />
 
           {/* Sub-bar: Hints + Sort + View Switcher */}
           <Stack
@@ -1229,29 +1265,9 @@ function Main({
         )}
       </Box>
 
-      {/* Mobile Floating Actions (Admin only) */}
+      {/* Mobile Quick Upload FAB (single compact FAB so cards aren't occluded) */}
       {authenticated && multiSelected === null && (
         <Box sx={{ display: { xs: "block", sm: "none" } }}>
-          <Tooltip title="打开 TextPad 记事本" placement="left">
-            <Fab
-              size="medium"
-              aria-label="打开 TextPad"
-              onClick={handleOpenTextPadForNew}
-              sx={{
-                position: "fixed",
-                right: 24,
-                bottom: 88,
-                zIndex: 1050,
-                backgroundColor: "background.paper",
-                color: "primary.main",
-                border: "1px solid",
-                borderColor: "divider",
-                boxShadow: "0 8px 20px rgba(0, 0, 0, 0.16)",
-              }}
-            >
-              <NoteAddRoundedIcon />
-            </Fab>
-          </Tooltip>
           <UploadFab onClick={() => setShowUploadDrawer(true)} />
         </Box>
       )}

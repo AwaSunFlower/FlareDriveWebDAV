@@ -183,7 +183,12 @@ const ShareLandingView: React.FC<ShareLandingViewProps> = ({
               size="small"
               color="primary"
               variant="outlined"
-              sx={{ height: 22, fontSize: "0.7rem", fontWeight: 700 }}
+              sx={{
+                display: { xs: "none", sm: "inline-flex" },
+                height: 22,
+                fontSize: "0.7rem",
+                fontWeight: 700,
+              }}
             />
           </Stack>
 

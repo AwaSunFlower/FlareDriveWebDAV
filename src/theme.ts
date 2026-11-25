@@ -59,6 +59,10 @@ export function createSunflowerTheme(mode: PaletteMode) {
     components: {
       MuiCssBaseline: {
         styleOverrides: {
+          "html, body": {
+            overflowX: "clip",
+            WebkitTapHighlightColor: "transparent",
+          },
           body: {
             transition: "background-color 0.25s ease, color 0.25s ease",
             backgroundImage: isLight
@@ -124,6 +128,12 @@ export function createSunflowerTheme(mode: PaletteMode) {
             border: isLight
               ? "1px solid rgba(180, 83, 9, 0.12)"
               : "1px solid rgba(251, 191, 36, 0.14)",
+            "@media (max-width:600px)": {
+              margin: 14,
+              width: "calc(100% - 28px)",
+              maxWidth: "calc(100% - 28px)",
+              borderRadius: 18,
+            },
           },
         },
       },

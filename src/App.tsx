@@ -430,7 +430,13 @@ function App() {
             <Box
               component="footer"
               sx={{
-                py: 2.5,
+                pt: 2.5,
+                pb: {
+                  xs: authStatus.authenticated
+                    ? "calc(82px + env(safe-area-inset-bottom))"
+                    : "calc(24px + env(safe-area-inset-bottom))",
+                  sm: 2.5,
+                },
                 px: 2,
                 textAlign: "center",
                 borderTop: "1px solid",

@@ -108,22 +108,22 @@ export const UploadFab = forwardRef<HTMLButtonElement, { onClick: () => void }>(
         ref={ref}
         aria-label="上传文件"
         variant="circular"
-        size="large"
+        size="medium"
         sx={{
           position: "fixed",
-          right: 20,
-          bottom: 20,
+          right: 16,
+          bottom: "calc(16px + env(safe-area-inset-bottom))",
           zIndex: 1050,
           color: "#FFFFFF",
           background: SUNFLOWER_GRADIENT,
-          boxShadow: "0 10px 26px -4px rgba(217, 119, 6, 0.52)",
+          boxShadow: "0 10px 24px -4px rgba(217, 119, 6, 0.5)",
           "&:hover": {
             background: SUNFLOWER_GRADIENT_HOVER,
           },
         }}
         onClick={onClick}
       >
-        <UploadRoundedIcon sx={{ fontSize: 28 }} />
+        <UploadRoundedIcon sx={{ fontSize: 24 }} />
       </Fab>
     );
   }

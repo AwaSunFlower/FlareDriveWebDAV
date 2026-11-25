@@ -57,13 +57,13 @@ function MultiSelectToolbar({
       <Box
         sx={{
           position: "fixed",
-          bottom: { xs: 16, sm: 24 },
+          bottom: { xs: "calc(12px + env(safe-area-inset-bottom))", sm: 24 },
           left: 0,
           right: 0,
           zIndex: 1200,
           display: "flex",
           justifyContent: "center",
-          px: 2,
+          px: { xs: 1.25, sm: 2 },
           pointerEvents: "none",
         }}
       >
@@ -73,9 +73,11 @@ function MultiSelectToolbar({
             pointerEvents: "auto",
             display: "flex",
             alignItems: "center",
-            gap: { xs: 0.4, sm: 0.9 },
-            px: { xs: 1.4, sm: 2 },
-            py: 1,
+            maxWidth: "100%",
+            overflowX: "auto",
+            gap: { xs: 0.25, sm: 0.9 },
+            px: { xs: 1.1, sm: 2 },
+            py: { xs: 0.75, sm: 1 },
             borderRadius: "999px",
             backgroundColor: isLight
               ? "rgba(41, 32, 24, 0.94)"
@@ -87,11 +89,12 @@ function MultiSelectToolbar({
           }}
         >
           <Chip
-            label={`已选 ${count} 项`}
+            label={`${count} 项`}
             size="small"
             sx={{
+              flexShrink: 0,
               fontWeight: 700,
-              fontSize: "0.78rem",
+              fontSize: { xs: "0.72rem", sm: "0.78rem" },
               backgroundColor: "rgba(251, 191, 36, 0.22)",
               color: "#FDE68A",
             }}
