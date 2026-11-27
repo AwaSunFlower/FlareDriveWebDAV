@@ -1,4 +1,6 @@
 import React, {
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -53,13 +55,14 @@ import FileGrid, {
   isPathInPrivateDirs,
   ViewMode,
 } from "./FileGrid";
-import MediaPreviewDialog from "./MediaPreviewDialog";
 import { isEditableTextFile, isImageFile } from "./MimeIcon";
-import MoveCopyDialog from "./MoveCopyDialog";
 import MultiSelectToolbar from "./MultiSelectToolbar";
-import ShareDialog from "./ShareDialog";
-import TextPadDrawer from "./TextPadDrawer";
 import UploadDrawer, { UploadFab } from "./UploadDrawer";
+
+const MediaPreviewDialog = lazy(() => import("./MediaPreviewDialog"));
+const MoveCopyDialog = lazy(() => import("./MoveCopyDialog"));
+const ShareDialog = lazy(() => import("./ShareDialog"));
+const TextPadDrawer = lazy(() => import("./TextPadDrawer"));
 import {
   ActiveDirShare,
   AuthRequiredError,
@@ -1286,54 +1289,68 @@ function Main({
         onNotify={onNotify}
       />
 
-      <TextPadDrawer
-        open={showTextPadDrawer}
-        setOpen={setShowTextPadDrawer}
-        cwd={cwd}
-        authenticated={authenticated}
-        shareToken={shareToken}
-        initialFile={editingTextFile}
-        editableFiles={editableTextFiles}
-        onSelectFile={setEditingTextFile}
-        onUpload={() => fetchFiles(false)}
-        onRequireLogin={onRequireLogin}
-        onNotify={onNotify}
-      />
+      <Suspense fallback={null}>
+        {showTextPadDrawer && (
+          <TextPadDrawer
+            open={showTextPadDrawer}
+            setOpen={setShowTextPadDrawer}
+            cwd={cwd}
+            authenticated={authenticated}
+            shareToken={shareToken}
+            initialFile={editingTextFile}
+            editableFiles={editableTextFiles}
+            onSelectFile={setEditingTextFile}
+            onUpload={() => fetchFiles(false)}
+            onRequireLogin={onRequireLogin}
+            onNotify={onNotify}
+          />
+        )}
 
-      <MediaPreviewDialog
-        file={previewMedia}
-        images={imageFiles}
-        authenticated={authenticated}
-        shareToken={shareToken}
-        onClose={() => setPreviewMedia(null)}
-        onSelectFile={setPreviewMedia}
-        onCopyLink={handleCopyLink}
-        onOpenShare={(f) => setShareFile(f)}
-      />
+        {previewMedia && (
+          <MediaPreviewDialog
+            file={previewMedia}
+            images={imageFiles}
+            authenticated={authenticated}
+            shareToken={shareToken}
+            onClose={() => setPreviewMedia(null)}
+            onSelectFile={setPreviewMedia}
+            onCopyLink={handleCopyLink}
+            onOpenShare={(f) => setShareFile(f)}
+          />
+        )}
 
-      <ShareDialog
-        file={shareFile}
-        authenticated={authenticated}
-        isPrivate={
-          shareFile ? isPathInPrivateDirs(shareFile.key, privateDirs) : false
-        }
-        onClose={() => setShareFile(null)}
-        onRequireLogin={onRequireLogin}
-        onNotify={onNotify}
-      />
+        {shareFile && (
+          <ShareDialog
+            file={shareFile}
+            authenticated={authenticated}
+            isPrivate={
+              shareFile
+                ? isPathInPrivateDirs(shareFile.key, privateDirs)
+                : false
+            }
+            onClose={() => setShareFile(null)}
+            onRequireLogin={onRequireLogin}
+            onNotify={onNotify}
+          />
+        )}
 
-      <MoveCopyDialog
-        open={moveCopyState.open}
-        mode={moveCopyState.mode}
-        items={multiSelected ?? []}
-        currentCwd={cwd}
-        onClose={() => setMoveCopyState((prev) => ({ ...prev, open: false }))}
-        onSuccess={() => {
-          setMultiSelected(null);
-          fetchFiles(false);
-        }}
-        onNotify={onNotify}
-      />
+        {moveCopyState.open && (
+          <MoveCopyDialog
+            open={moveCopyState.open}
+            mode={moveCopyState.mode}
+            items={multiSelected ?? []}
+            currentCwd={cwd}
+            onClose={() =>
+              setMoveCopyState((prev) => ({ ...prev, open: false }))
+            }
+            onSuccess={() => {
+              setMultiSelected(null);
+              fetchFiles(false);
+            }}
+            onNotify={onNotify}
+          />
+        )}
+      </Suspense>
 
       <MultiSelectToolbar
         multiSelected={multiSelected}

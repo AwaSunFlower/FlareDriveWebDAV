@@ -93,9 +93,10 @@ export async function generateThumbnail(file: File) {
     );
     ctx.drawImage(video, 0, 0, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
   } else if (file.type === "application/pdf") {
+    const pdfJsCdnUrl =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
     const pdfjsLib = await import(
-      // @ts-ignore
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs"
+      /* @vite-ignore */ pdfJsCdnUrl
     );
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
@@ -196,7 +197,7 @@ export async function multipartUpload(
   if (!uploadResponse.ok) {
     throw new Error(`初始化分片上传失败 (${uploadResponse.status})`);
   }
-  const { uploadId } = await uploadResponse.json<{ uploadId: string }>();
+  const { uploadId } = (await uploadResponse.json()) as { uploadId: string };
   const totalChunks = Math.ceil(file.size / SIZE_LIMIT);
 
   const limit = pLimit(2);

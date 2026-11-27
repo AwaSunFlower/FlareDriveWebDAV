@@ -28,7 +28,12 @@ export const onRequestPost: PagesFunction<DriveEnv> = async ({
     return jsonResponse({ error: "未绑定 R2 存储桶" }, 500);
   }
 
-  let body: { key?: string; expiresInSeconds?: number; download?: boolean };
+  let body: {
+    key?: string;
+    expiresInSeconds?: number;
+    download?: boolean;
+    passcode?: string;
+  };
   try {
     body = await request.json();
   } catch {
@@ -38,6 +43,12 @@ export const onRequestPost: PagesFunction<DriveEnv> = async ({
   const key = normalizeDrivePath(typeof body.key === "string" ? body.key : "");
   if (!key || key.startsWith(INTERNAL_PREFIX) || hasPathTraversal(key)) {
     return jsonResponse({ error: "无效的文件或目录路径" }, 400);
+  }
+
+  const passcode =
+    typeof body.passcode === "string" ? body.passcode.trim() : "";
+  if (passcode.length > 32) {
+    return jsonResponse({ error: "提取码长度不能超过 32 位" }, 400);
   }
 
   const head = await bucket.head(key);
@@ -53,14 +64,20 @@ export const onRequestPost: PagesFunction<DriveEnv> = async ({
       ? body.expiresInSeconds
       : 24 * 60 * 60;
 
-  const { token, expiresAt } = await createShareToken(env, key, ttl, scope);
+  const { token, expiresAt, hasPasscode } = await createShareToken(
+    env,
+    key,
+    ttl,
+    scope,
+    passcode || undefined
+  );
 
   const pageUrl = new URL("/", request.url);
   pageUrl.searchParams.set("share", token);
   pageUrl.searchParams.set(isDir ? "dir" : "file", key);
 
   let directUrl: string | null = null;
-  if (!isDir) {
+  if (!isDir && !hasPasscode) {
     const rawUrl = new URL(`/webdav/${encodeKeyPath(key)}`, request.url);
     rawUrl.searchParams.set("share", token);
     if (body.download) {
@@ -75,6 +92,7 @@ export const onRequestPost: PagesFunction<DriveEnv> = async ({
     directUrl,
     scope,
     expiresAt,
+    hasPasscode,
     key,
   });
 };

@@ -13,6 +13,8 @@ export interface AuthStatus {
 
 export interface ShareInfo {
   valid: boolean;
+  lockedByPasscode?: boolean;
+  requiresPasscode?: boolean;
   key: string;
   rootKey: string;
   name: string;
@@ -34,6 +36,21 @@ export interface StorageStats {
   totalFiles: number;
   totalFolders: number;
   totalSize: number;
+  userFilesSize?: number;
+  thumbnailCount?: number;
+  thumbnailSize?: number;
+  orphanThumbnails?: {
+    count: number;
+    size: number;
+    protectedRecentCount: number;
+    samples: Array<{ name: string; size: number; uploaded: string }>;
+  } | null;
+  largestFiles?: Array<{
+    key: string;
+    name: string;
+    size: number;
+    uploaded: string;
+  }>;
   quotaBytes: number;
   includesPrivate: boolean;
   categories: {
@@ -160,13 +177,15 @@ export async function logoutAdmin(): Promise<void> {
 export async function createSignedShare(
   key: string,
   expiresInSeconds: number,
-  download: boolean
+  download: boolean,
+  passcode?: string
 ): Promise<{
   url: string;
   pageUrl: string;
   directUrl: string | null;
   scope: "file" | "dir";
   expiresAt: number;
+  hasPasscode: boolean;
   key: string;
 }> {
   const res = await fetch("/api/share", {
@@ -175,7 +194,7 @@ export async function createSignedShare(
       "Content-Type": "application/json",
       ...SPA_REQUEST_HEADERS,
     },
-    body: JSON.stringify({ key, expiresInSeconds, download }),
+    body: JSON.stringify({ key, expiresInSeconds, download, passcode }),
   });
 
   if (res.status === 401) throw new AuthRequiredError();
@@ -185,6 +204,7 @@ export async function createSignedShare(
     directUrl?: string | null;
     scope?: "file" | "dir";
     expiresAt?: number;
+    hasPasscode?: boolean;
     key?: string;
     error?: string;
   };
@@ -197,8 +217,30 @@ export async function createSignedShare(
     directUrl: data.directUrl ?? null,
     scope: data.scope === "dir" ? "dir" : "file",
     expiresAt: data.expiresAt || Date.now() + expiresInSeconds * 1000,
+    hasPasscode: Boolean(data.hasPasscode),
     key: data.key || key,
   };
+}
+
+export async function unlockSharePasscode(
+  shareToken: string,
+  passcode: string
+): Promise<void> {
+  const res = await fetch("/api/share-info", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...SPA_REQUEST_HEADERS,
+    },
+    body: JSON.stringify({ share: shareToken, passcode }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    error?: string;
+  };
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || "提取码验证失败");
+  }
 }
 
 export async function fetchShareInfo(
@@ -261,4 +303,25 @@ export async function fetchStorageStats(): Promise<StorageStats> {
     throw new Error(data.error || `获取存储统计失败 (${res.status})`);
   }
   return (await res.json()) as StorageStats;
+}
+
+export async function cleanupOrphanThumbnails(): Promise<{
+  deletedCount: number;
+  freedBytes: number;
+  stats: StorageStats;
+}> {
+  const res = await fetch("/api/stats", {
+    method: "POST",
+    headers: SPA_REQUEST_HEADERS,
+  });
+  if (res.status === 401) throw new AuthRequiredError();
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || `清理孤儿缩略图失败 (${res.status})`);
+  }
+  return (await res.json()) as {
+    deletedCount: number;
+    freedBytes: number;
+    stats: StorageStats;
+  };
 }

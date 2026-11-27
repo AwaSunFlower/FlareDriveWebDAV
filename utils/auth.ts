@@ -16,6 +16,9 @@ export interface VerifiedSharePayload {
   key: string;
   scope: ShareScope;
   expiresAt: number;
+  requiresPasscode: boolean;
+  nonce?: string;
+  passcodeHash?: string;
 }
 
 export interface AuthResult {
@@ -194,7 +197,10 @@ export async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   return diff === 0;
 }
 
-function getSigningSecret(env: DriveEnv, purpose: "session" | "share"): string {
+function getSigningSecret(
+  env: DriveEnv,
+  purpose: "session" | "share" | "share-pwd" | "share-cookie"
+): string {
   const baseSecret =
     env.AUTH_SECRET ||
     `sunflower-drive-v1:${env.WEBDAV_USERNAME ?? ""}:${env.WEBDAV_PASSWORD ?? ""}`;
@@ -388,23 +394,76 @@ export async function authenticateRequest(
   return { authenticated: false, username: null, method: null };
 }
 
+function randomHex(byteLen = 6): string {
+  const buf = new Uint8Array(byteLen);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function computePasscodeDigest(
+  env: DriveEnv,
+  nonce: string,
+  passcode: string
+): Promise<string> {
+  const key = await importHmacKey(getSigningSecret(env, "share-pwd"));
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    textEncoder.encode(`${nonce}:${passcode.trim()}`)
+  );
+  return bytesToBase64Url(new Uint8Array(sig)).slice(0, 24);
+}
+
+async function computeShareUnlockTag(
+  env: DriveEnv,
+  token: string,
+  expiresAtMs: number
+): Promise<string> {
+  const key = await importHmacKey(getSigningSecret(env, "share-cookie"));
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    textEncoder.encode(`${token}:${expiresAtMs}`)
+  );
+  return bytesToBase64Url(new Uint8Array(sig)).slice(0, 28);
+}
+
+async function shareCookieNameForToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    textEncoder.encode(token)
+  );
+  const shortId = bytesToBase64Url(new Uint8Array(digest)).slice(0, 10);
+  return `sf_sh_${shortId}`;
+}
+
 export async function createShareToken(
   env: DriveEnv,
   key: string,
   expiresInSeconds: number,
-  scope: ShareScope = "file"
-): Promise<{ token: string; expiresAt: number }> {
+  scope: ShareScope = "file",
+  passcode?: string
+): Promise<{ token: string; expiresAt: number; hasPasscode: boolean }> {
   const clampedTtl = Math.max(
     60,
     Math.min(Math.floor(expiresInSeconds), MAX_SHARE_TTL_SECONDS)
   );
   const exp = Math.floor(Date.now() / 1000) + clampedTtl;
   const normalizedKey = normalizeDrivePath(key);
-  const token = await signPayload(
-    { k: normalizedKey, t: scope, exp, v: 2 },
-    getSigningSecret(env, "share")
-  );
-  return { token, expiresAt: exp * 1000 };
+  const payload: Record<string, unknown> = {
+    k: normalizedKey,
+    t: scope,
+    exp,
+    v: 2,
+  };
+  const trimmedPwd = passcode?.trim() || "";
+  if (trimmedPwd) {
+    const nonce = randomHex(6);
+    payload.n = nonce;
+    payload.p = await computePasscodeDigest(env, nonce, trimmedPwd);
+  }
+  const token = await signPayload(payload, getSigningSecret(env, "share"));
+  return { token, expiresAt: exp * 1000, hasPasscode: Boolean(trimmedPwd) };
 }
 
 export async function parseVerifiedShareToken(
@@ -416,6 +475,8 @@ export async function parseVerifiedShareToken(
     k?: string;
     t?: string;
     exp?: number;
+    n?: string;
+    p?: string;
   }>(token, getSigningSecret(env, "share"));
   const nowSec = Math.floor(Date.now() / 1000);
   if (
@@ -429,11 +490,75 @@ export async function parseVerifiedShareToken(
   const scope: ShareScope = payload.t === "dir" ? "dir" : "file";
   const normalizedKey = normalizeDrivePath(payload.k);
   if (!normalizedKey || hasPathTraversal(normalizedKey)) return null;
+  const requiresPasscode = Boolean(
+    typeof payload.p === "string" &&
+      payload.p &&
+      typeof payload.n === "string" &&
+      payload.n
+  );
   return {
     key: normalizedKey,
     scope,
     expiresAt: payload.exp * 1000,
+    requiresPasscode,
+    nonce: requiresPasscode ? payload.n : undefined,
+    passcodeHash: requiresPasscode ? payload.p : undefined,
   };
+}
+
+export async function verifySharePasscode(
+  env: DriveEnv,
+  share: VerifiedSharePayload,
+  candidatePasscode: string
+): Promise<boolean> {
+  if (!share.requiresPasscode || !share.nonce || !share.passcodeHash) {
+    return true;
+  }
+  const candidateHash = await computePasscodeDigest(
+    env,
+    share.nonce,
+    candidatePasscode
+  );
+  return timingSafeEqual(candidateHash, share.passcodeHash);
+}
+
+export async function buildShareUnlockCookie(
+  request: Request,
+  env: DriveEnv,
+  token: string,
+  expiresAtMs: number
+): Promise<string> {
+  const name = await shareCookieNameForToken(token);
+  const tag = await computeShareUnlockTag(env, token, expiresAtMs);
+  const maxAge = Math.max(
+    60,
+    Math.min(30 * 24 * 60 * 60, Math.floor((expiresAtMs - Date.now()) / 1000))
+  );
+  const isHttps = new URL(request.url).protocol === "https:";
+  const parts = [
+    `${name}=${tag}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${maxAge}`,
+  ];
+  if (isHttps) parts.push("Secure");
+  return parts.join("; ");
+}
+
+export async function isShareUnlockedByRequest(
+  request: Request,
+  env: DriveEnv,
+  token: string,
+  share: VerifiedSharePayload
+): Promise<boolean> {
+  if (!share.requiresPasscode) return true;
+  const cookies = parseCookies(request);
+  const name = await shareCookieNameForToken(token);
+  const cookieVal = cookies[name];
+  if (!cookieVal) return false;
+  const expected = await computeShareUnlockTag(env, token, share.expiresAt);
+  return timingSafeEqual(cookieVal, expected);
 }
 
 export async function isPathAllowedByShare(

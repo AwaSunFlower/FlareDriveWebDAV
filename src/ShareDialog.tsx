@@ -18,6 +18,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import CasinoRoundedIcon from "@mui/icons-material/CasinoRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
 import FolderSharedRoundedIcon from "@mui/icons-material/FolderSharedRounded";
@@ -48,6 +49,13 @@ const TTL_OPTIONS = [
   { label: "长期有效", seconds: 3650 * 24 * 60 * 60 },
 ];
 
+function randomPasscode(len = 4): string {
+  const chars = "23456789abcdefghjkmnpqrstuvwxyz";
+  const buf = new Uint8Array(len);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, (b) => chars[b % chars.length]).join("");
+}
+
 const ShareDialog: React.FC<ShareDialogProps> = ({
   file,
   authenticated,
@@ -61,12 +69,15 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
 
   const [ttlSeconds, setTtlSeconds] = useState(24 * 60 * 60);
   const [forceDownload, setForceDownload] = useState(false);
+  const [usePasscode, setUsePasscode] = useState(false);
+  const [passcode, setPasscode] = useState("");
   const [generating, setGenerating] = useState(false);
   const [shareResult, setShareResult] = useState<{
     pageUrl: string;
     directUrl: string | null;
     scope: "file" | "dir";
     expiresAt: number;
+    hasPasscode: boolean;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,6 +86,8 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
     setError(null);
     setTtlSeconds(24 * 60 * 60);
     setForceDownload(false);
+    setUsePasscode(false);
+    setPasscode(randomPasscode(4));
   }, [file]);
 
   if (!file) return null;
@@ -92,9 +105,31 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
     }
   };
 
+  const handleCopyFullShareText = () => {
+    if (!shareResult) return;
+    const lines = [
+      `【Sunflower Drive】向你分享${isDir ? "文件夹" : "文件"}「${filename}」`,
+      `链接：${shareResult.pageUrl}`,
+    ];
+    if (shareResult.hasPasscode && passcode.trim()) {
+      lines.push(`提取码：${passcode.trim()}`);
+    }
+    lines.push(
+      isLongTerm
+        ? "有效期：长期有效"
+        : `有效期至：${new Date(shareResult.expiresAt).toLocaleString()}`
+    );
+    copyText(lines.join("\n"), "完整分享文案");
+  };
+
   const handleGenerateSignedLink = async () => {
     if (!authenticated) {
       onRequireLogin();
+      return;
+    }
+    const trimmedCode = usePasscode ? passcode.trim() : "";
+    if (usePasscode && !trimmedCode) {
+      setError("请输入提取码或关闭提取码保护");
       return;
     }
     setGenerating(true);
@@ -103,13 +138,15 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
       const result = await createSignedShare(
         file.key,
         ttlSeconds,
-        !isDir && forceDownload
+        !isDir && forceDownload,
+        trimmedCode || undefined
       );
       setShareResult({
         pageUrl: result.pageUrl,
         directUrl: result.directUrl,
         scope: result.scope,
         expiresAt: result.expiresAt,
+        hasPasscode: result.hasPasscode,
       });
       onNotify(
         isDir ? "加密文件夹分享链接已生成" : "加密文件分享链接已生成",
@@ -196,7 +233,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
                 sx={{ fontSize: 18, color: "primary.main" }}
               />
               <Typography variant="subtitle2" fontWeight={700}>
-                HMAC-SHA256 签名通行链接
+                HMAC-SHA256 签名通行链接（零数据库）
               </Typography>
             </Stack>
             {isPrivate && (
@@ -218,8 +255,8 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
             sx={{ mb: 1.75, lineHeight: 1.6 }}
           >
             {isDir
-              ? "访客打开此链接后，将自动解锁该文件夹及其子目录内的全部文件与清晰原图，不会被访客加密拦截；但无法查看其他目录的加密文件。"
-              : "访客通过此链接访问不会触发文件加密或图片模糊拦截，可直接高清预览或下载此文件。"}
+              ? "访客打开此链接后，将自动解锁该文件夹及其子目录内的全部文件与清晰原图，但无法访问其他目录。"
+              : "访客通过此链接可直接高清预览或下载此文件，无需暴露你的管理员账号密码。"}
           </Typography>
 
           <Stack
@@ -248,13 +285,76 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
             })}
           </Stack>
 
+          {/* Optional Passcode Switch & Input */}
+          <Box sx={{ mb: 1.5 }}>
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={usePasscode}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    setUsePasscode(next);
+                    if (next && !passcode.trim()) {
+                      setPasscode(randomPasscode(4));
+                    }
+                    setShareResult(null);
+                  }}
+                />
+              }
+              label={
+                <Typography variant="body2" fontWeight={600}>
+                  启用提取码保护（防离线爆破 HMAC 校验）
+                </Typography>
+              }
+            />
+
+            {usePasscode && (
+              <TextField
+                size="small"
+                fullWidth
+                sx={{ mt: 0.75 }}
+                label="提取码（1~32 位，支持自定义）"
+                value={passcode}
+                onChange={(e) => {
+                  setPasscode(e.target.value);
+                  setShareResult(null);
+                }}
+                inputProps={{ maxLength: 32 }}
+                InputProps={{
+                  sx: {
+                    fontFamily: "monospace",
+                    fontWeight: 700,
+                    backgroundColor: "background.paper",
+                    borderRadius: "10px",
+                  },
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <Tooltip title="随机生成 4 位提取码">
+                        <IconButton
+                          size="small"
+                          onClick={() => {
+                            setPasscode(randomPasscode(4));
+                            setShareResult(null);
+                          }}
+                        >
+                          <CasinoRoundedIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </InputAdornment>
+                  ),
+                }}
+              />
+            )}
+          </Box>
+
           <Stack
             direction={{ xs: "column", sm: "row" }}
             alignItems={{ xs: "stretch", sm: "center" }}
             justifyContent="space-between"
             spacing={1}
           >
-            {!isDir ? (
+            {!isDir && !usePasscode ? (
               <FormControlLabel
                 control={
                   <Switch
@@ -274,7 +374,9 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
               />
             ) : (
               <Typography variant="caption" color="text.secondary">
-                仅开放只读浏览、预览与下载权限
+                {usePasscode
+                  ? "访客需先输入正确提取码后方可查看或下载"
+                  : "仅开放只读浏览、预览与下载权限"}
               </Typography>
             )}
 
@@ -303,7 +405,6 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
 
           {shareResult && (
             <Stack spacing={1.75} sx={{ mt: 2.25 }}>
-              {/* Recommended Share Page URL */}
               <Box>
                 <Typography
                   variant="caption"
@@ -312,8 +413,8 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
                   sx={{ mb: 0.6, display: "block" }}
                 >
                   {isDir
-                    ? "文件夹分享链接（发给访客即可直接浏览）"
-                    : "分享预览页链接（推荐发给好友，支持在线高清预览与下载）"}
+                    ? "文件夹分享链接（发给访客即可访问）"
+                    : "分享预览页链接（推荐发给好友，支持在线预览与下载）"}
                 </Typography>
                 <TextField
                   size="small"
@@ -359,7 +460,6 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
                 />
               </Box>
 
-              {/* Direct Signed File Link (for downloaders / direct embedding) */}
               {shareResult.directUrl && (
                 <Box>
                   <Typography
@@ -403,13 +503,41 @@ const ShareDialog: React.FC<ShareDialogProps> = ({
                 </Box>
               )}
 
-              <Typography variant="caption" color="text.secondary">
-                {isLongTerm
-                  ? "有效期：长期有效"
-                  : `有效期至：${new Date(
-                      shareResult.expiresAt
-                    ).toLocaleString()}`}
-              </Typography>
+              <Stack
+                direction="row"
+                alignItems="center"
+                justifyContent="space-between"
+                flexWrap="wrap"
+                gap={1}
+              >
+                <Stack direction="row" spacing={1} alignItems="center">
+                  {shareResult.hasPasscode && passcode.trim() && (
+                    <Chip
+                      icon={<LockRoundedIcon sx={{ fontSize: "14px !important" }} />}
+                      label={`提取码：${passcode.trim()}`}
+                      size="small"
+                      color="primary"
+                      sx={{ fontWeight: 700 }}
+                    />
+                  )}
+                  <Typography variant="caption" color="text.secondary">
+                    {isLongTerm
+                      ? "有效期：长期有效"
+                      : `有效期至：${new Date(
+                          shareResult.expiresAt
+                        ).toLocaleString()}`}
+                  </Typography>
+                </Stack>
+
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<ContentCopyRoundedIcon sx={{ fontSize: 15 }} />}
+                  onClick={handleCopyFullShareText}
+                >
+                  复制完整分享文案
+                </Button>
+              </Stack>
             </Stack>
           )}
         </Box>

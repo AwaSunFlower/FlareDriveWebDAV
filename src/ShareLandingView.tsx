@@ -9,6 +9,7 @@ import {
   PaletteMode,
   Paper,
   Stack,
+  TextField,
   Tooltip,
   Typography,
   useTheme,
@@ -20,6 +21,7 @@ import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
 import LinkOffRoundedIcon from "@mui/icons-material/LinkOffRounded";
+import LockRoundedIcon from "@mui/icons-material/LockRounded";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import VerifiedRoundedIcon from "@mui/icons-material/VerifiedRounded";
 import MimeIcon, {
@@ -33,6 +35,7 @@ import {
   fetchShareInfo,
   ShareInfo,
   SPA_REQUEST_HEADERS,
+  unlockSharePasscode,
 } from "./app/api";
 import { humanReadableSize } from "./app/utils";
 
@@ -66,6 +69,10 @@ const ShareLandingView: React.FC<ShareLandingViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [loadingText, setLoadingText] = useState(false);
+  const [passcodeInput, setPasscodeInput] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+  const [reloadSeq, setReloadSeq] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,10 +96,10 @@ const ShareLandingView: React.FC<ShareLandingViewProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [fileKey, shareToken]);
+  }, [fileKey, reloadSeq, shareToken]);
 
   useEffect(() => {
-    if (!shareInfo || shareInfo.isDirectory) return;
+    if (!shareInfo || shareInfo.isDirectory || shareInfo.lockedByPasscode) return;
     if (!isEditableTextFile(shareInfo.contentType, shareInfo.name)) return;
     if (shareInfo.size > 512 * 1024) return; // Skip inline text read for huge files
 
@@ -305,6 +312,95 @@ const ShareLandingView: React.FC<ShareLandingViewProps> = ({
             >
               前往 Sunflower Drive 主页
             </Button>
+          </Paper>
+        ) : shareInfo.lockedByPasscode ? (
+          <Paper
+            elevation={0}
+            sx={{
+              p: { xs: 3.5, sm: 5 },
+              my: "auto",
+              maxWidth: 460,
+              width: "100%",
+              mx: "auto",
+              borderRadius: "24px",
+              border: "1px solid",
+              borderColor: "divider",
+              textAlign: "center",
+            }}
+          >
+            <Box
+              sx={{
+                width: 64,
+                height: 64,
+                borderRadius: "18px",
+                mx: "auto",
+                mb: 2,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: isLight
+                  ? "rgba(251, 191, 36, 0.18)"
+                  : "rgba(251, 191, 36, 0.14)",
+                color: "primary.main",
+              }}
+            >
+              <LockRoundedIcon sx={{ fontSize: 32 }} />
+            </Box>
+            <Typography variant="h6" fontWeight={700} gutterBottom>
+              {shareInfo.name}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
+              文件大小 {humanReadableSize(shareInfo.size)} · 请输入分享提取码解锁预览与下载
+            </Typography>
+            <Stack
+              component="form"
+              spacing={1.5}
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!passcodeInput.trim()) return;
+                setUnlocking(true);
+                setUnlockError(null);
+                try {
+                  await unlockSharePasscode(shareToken, passcodeInput);
+                  onNotify("提取码验证成功", "success");
+                  setReloadSeq((n) => n + 1);
+                } catch (err) {
+                  setUnlockError(
+                    err instanceof Error ? err.message : "提取码不正确"
+                  );
+                } finally {
+                  setUnlocking(false);
+                }
+              }}
+            >
+              <TextField
+                autoFocus
+                fullWidth
+                size="small"
+                placeholder="请输入提取码"
+                value={passcodeInput}
+                onChange={(e) => setPasscodeInput(e.target.value)}
+                InputProps={{
+                  sx: {
+                    fontFamily: "monospace",
+                    fontWeight: 700,
+                    textAlign: "center",
+                  },
+                }}
+              />
+              {unlockError && (
+                <Alert severity="error" sx={{ borderRadius: "10px", textAlign: "left" }}>
+                  {unlockError}
+                </Alert>
+              )}
+              <Button
+                type="submit"
+                variant="contained"
+                disabled={unlocking || !passcodeInput.trim()}
+              >
+                {unlocking ? "验证中…" : "验证提取码"}
+              </Button>
+            </Stack>
           </Paper>
         ) : (
           <Stack spacing={2.5}>

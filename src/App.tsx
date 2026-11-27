@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   Alert,
   Box,
@@ -10,27 +17,31 @@ import {
   Paper,
   Snackbar,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import LinkOffRoundedIcon from "@mui/icons-material/LinkOffRounded";
+import LockRoundedIcon from "@mui/icons-material/LockRounded";
 import { ThemeProvider } from "@mui/material/styles";
 
 import Header from "./Header";
-import LoginDialog from "./LoginDialog";
 import Main from "./Main";
-import ProgressDialog from "./ProgressDialog";
-import ShareLandingView from "./ShareLandingView";
-import StorageStatsDialog from "./StorageStatsDialog";
 import {
   ActiveDirShare,
   AuthStatus,
   fetchAuthStatus,
   fetchShareInfo,
   logoutAdmin,
+  unlockSharePasscode,
 } from "./app/api";
 import { TransferQueueProvider } from "./app/transferQueue";
 import { createSunflowerTheme } from "./theme";
+
+const LoginDialog = lazy(() => import("./LoginDialog"));
+const ProgressDialog = lazy(() => import("./ProgressDialog"));
+const ShareLandingView = lazy(() => import("./ShareLandingView"));
+const StorageStatsDialog = lazy(() => import("./StorageStatsDialog"));
 
 const COLOR_MODE_STORAGE_KEY = "sunflower_drive_color_mode";
 
@@ -96,6 +107,13 @@ function App() {
     Boolean(readUrlShareParams()?.dir)
   );
   const [dirShareError, setDirShareError] = useState<string | null>(null);
+  const [dirShareLockedName, setDirShareLockedName] = useState<string | null>(
+    null
+  );
+  const [dirPasscode, setDirPasscode] = useState("");
+  const [dirUnlocking, setDirUnlocking] = useState(false);
+  const [dirUnlockError, setDirUnlockError] = useState<string | null>(null);
+  const [dirShareSeq, setDirShareSeq] = useState(0);
 
   const [search, setSearch] = useState("");
   const [showProgressDialog, setShowProgressDialog] = useState(false);
@@ -157,6 +175,7 @@ function App() {
     if (!urlShare?.dir) {
       setActiveDirShare(null);
       setDirShareError(null);
+      setDirShareLockedName(null);
       setDirShareLoading(false);
       return;
     }
@@ -173,6 +192,12 @@ function App() {
           setActiveDirShare(null);
           return;
         }
+        if (info.lockedByPasscode) {
+          setDirShareLockedName(info.name);
+          setActiveDirShare(null);
+          return;
+        }
+        setDirShareLockedName(null);
         setActiveDirShare({
           token: urlShare.token,
           rootDir: info.rootKey,
@@ -191,7 +216,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [urlShare]);
+  }, [dirShareSeq, urlShare]);
 
   const handleToggleColorMode = useCallback(() => {
     setColorMode((prev) => (prev === "light" ? "dark" : "light"));
@@ -287,14 +312,26 @@ function App() {
       <ThemeProvider theme={theme}>
         <CssBaseline />
         {globalStyles}
-        <ShareLandingView
-          shareToken={urlShare.token}
-          fileKey={urlShare.file}
-          colorMode={colorMode}
-          onToggleColorMode={handleToggleColorMode}
-          onExitShare={handleExitShare}
-          onNotify={handleNotify}
-        />
+        <Suspense
+          fallback={
+            <Stack
+              alignItems="center"
+              justifyContent="center"
+              sx={{ minHeight: "100vh" }}
+            >
+              <CircularProgress size={34} />
+            </Stack>
+          }
+        >
+          <ShareLandingView
+            shareToken={urlShare.token}
+            fileKey={urlShare.file}
+            colorMode={colorMode}
+            onToggleColorMode={handleToggleColorMode}
+            onExitShare={handleExitShare}
+            onNotify={handleNotify}
+          />
+        </Suspense>
         <Snackbar
           autoHideDuration={3600}
           open={toast.open}
@@ -338,6 +375,94 @@ function App() {
               {dirShareLoading ? "正在验证分享链接…" : "正在检查登录状态…"}
             </Typography>
           </Stack>
+        ) : dirShareLockedName && urlShare ? (
+          <Box
+            sx={{
+              minHeight: "100vh",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              p: 3,
+            }}
+          >
+            <Paper
+              elevation={0}
+              sx={{
+                maxWidth: 440,
+                width: "100%",
+                p: 4,
+                borderRadius: "24px",
+                border: "1px solid",
+                borderColor: "divider",
+                textAlign: "center",
+              }}
+            >
+              <Box
+                sx={{
+                  width: 64,
+                  height: 64,
+                  borderRadius: "18px",
+                  mx: "auto",
+                  mb: 2,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: "rgba(251, 191, 36, 0.16)",
+                  color: "primary.main",
+                }}
+              >
+                <LockRoundedIcon sx={{ fontSize: 32 }} />
+              </Box>
+              <Typography variant="h6" fontWeight={700} gutterBottom>
+                文件夹「{dirShareLockedName}」受提取码保护
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
+                请输入提取码解锁浏览该共享文件夹
+              </Typography>
+              <Stack
+                component="form"
+                spacing={1.5}
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!dirPasscode.trim()) return;
+                  setDirUnlocking(true);
+                  setDirUnlockError(null);
+                  try {
+                    await unlockSharePasscode(urlShare.token, dirPasscode);
+                    handleNotify("文件夹已解锁", "success");
+                    setDirShareSeq((n) => n + 1);
+                  } catch (err) {
+                    setDirUnlockError(
+                      err instanceof Error ? err.message : "提取码不正确"
+                    );
+                  } finally {
+                    setDirUnlocking(false);
+                  }
+                }}
+              >
+                <TextField
+                  autoFocus
+                  fullWidth
+                  size="small"
+                  placeholder="请输入提取码"
+                  value={dirPasscode}
+                  onChange={(e) => setDirPasscode(e.target.value)}
+                />
+                {dirUnlockError && (
+                  <Alert severity="error" sx={{ borderRadius: "10px", textAlign: "left" }}>
+                    {dirUnlockError}
+                  </Alert>
+                )}
+                <Button
+                  type="submit"
+                  variant="contained"
+                  disabled={dirUnlocking || !dirPasscode.trim()}
+                >
+                  {dirUnlocking ? "验证中…" : "验证提取码"}
+                </Button>
+              </Stack>
+            </Paper>
+          </Box>
         ) : dirShareError ? (
           <Box
             sx={{
@@ -396,7 +521,9 @@ function App() {
             </Paper>
           </Box>
         ) : requireFullPageLogin ? (
-          <LoginDialog open fullPage onSuccess={handleLoginSuccess} />
+          <Suspense fallback={null}>
+            <LoginDialog open fullPage onSuccess={handleLoginSuccess} />
+          </Suspense>
         ) : (
           <Stack sx={{ minHeight: "100%" }}>
             <Header
@@ -450,21 +577,30 @@ function App() {
           </Stack>
         )}
 
-        <LoginDialog
-          open={showLoginDialog}
-          onClose={handleCloseLogin}
-          onSuccess={handleLoginSuccess}
-        />
+        <Suspense fallback={null}>
+          {showLoginDialog && (
+            <LoginDialog
+              open={showLoginDialog}
+              onClose={handleCloseLogin}
+              onSuccess={handleLoginSuccess}
+            />
+          )}
 
-        <StorageStatsDialog
-          open={showStatsDialog}
-          onClose={handleCloseStats}
-        />
+          {showStatsDialog && (
+            <StorageStatsDialog
+              open={showStatsDialog}
+              onClose={handleCloseStats}
+              onNotify={handleNotify}
+            />
+          )}
 
-        <ProgressDialog
-          open={showProgressDialog}
-          onClose={() => setShowProgressDialog(false)}
-        />
+          {showProgressDialog && (
+            <ProgressDialog
+              open={showProgressDialog}
+              onClose={() => setShowProgressDialog(false)}
+            />
+          )}
+        </Suspense>
 
         <Snackbar
           autoHideDuration={3600}

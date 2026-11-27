@@ -9,6 +9,7 @@ import {
   isPathAllowedByShare,
   isPrivatePath,
   isPublicReadEnabled,
+  isShareUnlockedByRequest,
   normalizeDrivePath,
   parseVerifiedShareToken,
   THUMBNAILS_PREFIX,
@@ -97,7 +98,10 @@ export const onRequest: PagesFunction<DriveEnv> = async function (context) {
       ? await parseVerifiedShareToken(env, shareToken)
       : null;
 
-    if (verifiedShare) {
+    if (
+      verifiedShare &&
+      (await isShareUnlockedByRequest(request, env, shareToken, verifiedShare))
+    ) {
       if (path.startsWith(THUMBNAILS_PREFIX) && (method === "GET" || method === "HEAD")) {
         // Allow loading thumbnails ONLY for files authorized by the share token
         const forKey = normalizeDrivePath(url.searchParams.get("for") || "");
